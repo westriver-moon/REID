@@ -1,0 +1,53 @@
+# OS and editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python caches
+**/__pycache__/
+*.py[cod]
+
+# Common generated artifacts
+*.log
+*.out
+*.tar
+*.tar.gz
+*.zip
+
+# Model weights and arrays
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.safetensors
+*.h5
+*.npy
+*.npz
+
+# Local agent/runtime state
+.agents/
+.codex/
+codex-local/
+tmp/
+
+# Offline weight staging and model storage
+manual_weight_upload/inbox/
+manual_weight_upload/logs/
+pretrained/
+
+# Local proxy logs and backups
+non_research/codex_proxy/backups/
+non_research/codex_proxy/login-device.log
+non_research/codex_proxy/login-device-live.log
+
+# TVI-LFM runtime artifacts and embedded repo metadata
+TVI-LFM/.git/
+TVI-LFM/.git.backup*/
+TVI-LFM/base_model/
+TVI-LFM/datasets/
+TVI-LFM/logs/
+TVI-LFM/outputs/
+TVI-LFM/network/clip_model/data/
+TVI-LFM/network/clip_model/checkpoint.pth.tar
+TVI-LFM/project/sysumm01/datasets/vcm_index/

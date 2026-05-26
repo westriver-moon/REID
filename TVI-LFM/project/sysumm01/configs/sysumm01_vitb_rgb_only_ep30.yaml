@@ -1,0 +1,48 @@
+seed: 42
+
+dataset:
+  root: /home/cgv841/datasets/SYSU-MM01
+  image_size: [256, 128]
+  use_val: true
+  train_augment: basic
+  train_modality: rgb
+
+model:
+  type: baseline
+  backbone_name: vit_base_patch16_224
+  pretrained_path: /home/cgv841/ybj/pretrained/official/transreid_market_official.pth
+  drop_path_rate: 0.1
+
+loss:
+  id_weight: 1.0
+  triplet_weight: 1.0
+  triplet_margin: 0.3
+  cross_batch_memory_size: 0
+  reset_memory_each_epoch: true
+
+train:
+  epochs: 30
+  steps_per_epoch: 180
+  num_ids: 8
+  num_instances: 2
+  num_workers: 8
+  lr: 0.0001
+  min_lr: 0.000001
+  scheduler: warmup_cosine
+  warmup_epochs: 3
+  warmup_init_lr: 0.00001
+  weight_decay: 0.05
+  amp: true
+  clip_grad_norm: 1.0
+  eval_trials: 2
+  full_coverage_priority: true
+  min_epoch_coverage: 0.9
+
+eval:
+  batch_size: 128
+  num_workers: 8
+  num_trials: 10
+  primary_mode: all
+  extra_modes: [indoor]
+  protocol: same_modality
+  modality: rgb
