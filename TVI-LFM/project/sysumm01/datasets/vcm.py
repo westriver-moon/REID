@@ -7,6 +7,7 @@ import torch
 from PIL import Image
 from torch.utils.data import BatchSampler, Dataset
 
+from project.sysumm01.datasets.schp_parts import PairedImagePartTransform, load_part_mask
 from project.sysumm01.datasets.sysumm01 import build_train_records, build_transforms
 
 
@@ -275,6 +276,9 @@ class SYSUIRVCMIRDataset(Dataset):
         vcm_frame_sampling="random",
         vcm_frames_per_tracklet=1,
         train_augment="strong_reid",
+        schp_mask_root=None,
+        schp_min_part_pixels=4,
+        schp_allow_fallback=True,
     ):
         self.vcm_root = vcm_root
         self.sysu_root = sysu_root
@@ -289,7 +293,19 @@ class SYSUIRVCMIRDataset(Dataset):
                 "vcm_frames_per_tracklet must be in [1, 4], got {}".format(self.vcm_frames_per_tracklet)
             )
 
-        self.transform = build_transforms(image_size=image_size, training=True, augment=train_augment)
+        self.image_size = tuple(image_size)
+        self.schp_mask_root = schp_mask_root
+        self.schp_min_part_pixels = int(schp_min_part_pixels)
+        self.schp_allow_fallback = bool(schp_allow_fallback)
+        self.use_part_masks = schp_mask_root is not None
+        if self.use_part_masks:
+            self.transform = PairedImagePartTransform(
+                image_size=image_size,
+                training=True,
+                augment=train_augment,
+            )
+        else:
+            self.transform = build_transforms(image_size=image_size, training=True, augment=train_augment)
         self.samples = []
         self.indices_by_label = defaultdict(list)
         self.ir_by_label = defaultdict(list)
@@ -410,10 +426,27 @@ class SYSUIRVCMIRDataset(Dataset):
         else:
             full_paths = [item["path"]]
         images = []
+        part_masks = []
         for full_path in full_paths:
             image = Image.open(full_path).convert("RGB")
-            images.append(self.transform(image))
-        return {
+            if self.use_part_masks:
+                source_root = self.vcm_root if item["source"] == "vcm" else self.sysu_root
+                source_name = "vcm" if item["source"] == "vcm" else "sysumm01"
+                part_mask = load_part_mask(
+                    full_path,
+                    image_size=image.size,
+                    mask_root=self.schp_mask_root,
+                    source_root=source_root,
+                    source_name=source_name,
+                    min_part_pixels=self.schp_min_part_pixels,
+                    allow_fallback=self.schp_allow_fallback,
+                )
+                image_tensor, part_mask_tensor = self.transform(image, part_mask)
+                images.append(image_tensor)
+                part_masks.append(part_mask_tensor)
+            else:
+                images.append(self.transform(image))
+        result = {
             "images": torch.stack(images, dim=0),
             "label": item["label"],
             "pid": item["pid"],
@@ -423,6 +456,9 @@ class SYSUIRVCMIRDataset(Dataset):
             "source": item["source"],
             "frame_paths": full_paths,
         }
+        if part_masks:
+            result["part_masks"] = torch.stack(part_masks, dim=0)
+        return result
 
 
 def collate_sysu_ir_vcm_ir(batch):
@@ -436,6 +472,7 @@ def collate_sysu_ir_vcm_ir(batch):
     sources = []
     tracklet_ids = []
     paths = []
+    part_masks = []
     next_group = 0
 
     for sample in batch:
@@ -443,6 +480,7 @@ def collate_sysu_ir_vcm_ir(batch):
         if sample_images is None:
             sample_images = sample["image"].unsqueeze(0)
         frame_paths = sample.get("frame_paths") or [sample.get("path")]
+        sample_part_masks = sample.get("part_masks")
         is_vcm_tracklet = sample.get("source") == "vcm" and sample_images.shape[0] > 1
         group_id = next_group if is_vcm_tracklet else -1
         if is_vcm_tracklet:
@@ -458,8 +496,10 @@ def collate_sysu_ir_vcm_ir(batch):
             sources.append(sample.get("source", "unknown"))
             tracklet_ids.append(sample.get("tracklet_id", ""))
             paths.append(frame_paths[frame_index] if frame_index < len(frame_paths) else frame_paths[-1])
+            if sample_part_masks is not None:
+                part_masks.append(sample_part_masks[frame_index])
 
-    return {
+    result = {
         "image": torch.stack(images, dim=0),
         "label": torch.tensor(labels, dtype=torch.long),
         "pid": torch.tensor(pids, dtype=torch.long),
@@ -470,6 +510,9 @@ def collate_sysu_ir_vcm_ir(batch):
         "tracklet_id": tracklet_ids,
         "path": paths,
     }
+    if part_masks:
+        result["part_masks"] = torch.stack(part_masks, dim=0)
+    return result
 
 
 class SYSUIRVCMIRSampler(BatchSampler):

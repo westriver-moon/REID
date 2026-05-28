@@ -9,6 +9,8 @@ from PIL import Image
 from torch.utils.data import BatchSampler, Dataset
 from torchvision import transforms as T
 
+from project.sysumm01.datasets.schp_parts import PairedImagePartTransform, load_part_mask
+
 
 RGB_CAMERAS = (1, 2, 4, 5)
 IR_CAMERAS = (3, 6)
@@ -337,9 +339,25 @@ class SYSUTrainDataset(Dataset):
 
 
 class SYSUEvalDataset(Dataset):
-    def __init__(self, records, image_size):
+    def __init__(
+        self,
+        records,
+        image_size,
+        schp_mask_root=None,
+        schp_source_root=None,
+        schp_min_part_pixels=4,
+        schp_allow_fallback=True,
+    ):
         self.records = records
-        self.transform = build_transforms(image_size=image_size, training=False)
+        self.schp_mask_root = schp_mask_root
+        self.schp_source_root = schp_source_root
+        self.schp_min_part_pixels = int(schp_min_part_pixels)
+        self.schp_allow_fallback = bool(schp_allow_fallback)
+        self.use_part_masks = schp_mask_root is not None
+        if self.use_part_masks:
+            self.transform = PairedImagePartTransform(image_size=image_size, training=False, augment="basic")
+        else:
+            self.transform = build_transforms(image_size=image_size, training=False)
 
     def __len__(self):
         return len(self.records)
@@ -347,13 +365,29 @@ class SYSUEvalDataset(Dataset):
     def __getitem__(self, index):
         record = self.records[index]
         image = Image.open(record["path"]).convert("RGB")
-        tensor = self.transform(image)
-        return {
+        if self.use_part_masks:
+            part_mask = load_part_mask(
+                record["path"],
+                image_size=image.size,
+                mask_root=self.schp_mask_root,
+                source_root=self.schp_source_root,
+                source_name="sysumm01",
+                min_part_pixels=self.schp_min_part_pixels,
+                allow_fallback=self.schp_allow_fallback,
+            )
+            tensor, part_mask_tensor = self.transform(image, part_mask)
+        else:
+            tensor = self.transform(image)
+            part_mask_tensor = None
+        result = {
             "image": tensor,
             "pid": record["pid"],
             "camid": record["camid"],
             "path": record["path"],
         }
+        if part_mask_tensor is not None:
+            result["part_masks"] = part_mask_tensor
+        return result
 
 
 class CrossModalBatchSampler(BatchSampler):

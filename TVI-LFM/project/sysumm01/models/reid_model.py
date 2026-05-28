@@ -14,22 +14,37 @@ class ReIDModel(nn.Module):
         self.bnneck.bias.requires_grad_(False)
         self.classifier = nn.Linear(feature_dim, num_classes, bias=False)
         nn.init.normal_(self.classifier.weight, std=0.001)
+        self.part_classifier = None
+        if model_config.get("part_classifier", False):
+            self.part_classifier = nn.Linear(feature_dim, num_classes, bias=False)
+            nn.init.normal_(self.part_classifier.weight, std=0.001)
 
-    def forward(self, images):
-        backbone_outputs = self.backbone(images)
+    def forward(self, images, part_masks=None):
+        backbone_outputs = self.backbone(images, part_masks=part_masks)
         global_feat = backbone_outputs["features"]
         bn_feat = self.bnneck(global_feat)
         logits = self.classifier(bn_feat)
-        return {
+        outputs = {
             "logits": logits,
             "global_feat": global_feat,
             "embeddings": F.normalize(bn_feat, dim=1),
             "patch_scores": backbone_outputs["patch_scores"],
         }
+        part_features = backbone_outputs.get("part_features")
+        if part_features is not None:
+            outputs["part_features"] = part_features
+            if self.part_classifier is not None:
+                part_logits = self.part_classifier(part_features.reshape(-1, part_features.shape[-1]))
+                outputs["part_logits"] = part_logits.reshape(
+                    part_features.shape[0],
+                    part_features.shape[1],
+                    -1,
+                )
+        return outputs
 
     @torch.no_grad()
-    def extract_features(self, images, return_patch_scores=False):
-        outputs = self.forward(images)
+    def extract_features(self, images, return_patch_scores=False, part_masks=None):
+        outputs = self.forward(images, part_masks=part_masks)
         if return_patch_scores:
             return outputs["embeddings"], outputs["patch_scores"]
         return outputs["embeddings"]

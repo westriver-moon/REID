@@ -45,7 +45,9 @@ non_research/codex_proxy/login-device-live.log
 TVI-LFM/.git/
 TVI-LFM/.git.backup*/
 TVI-LFM/base_model/
+TVI-LFM/data/schp_masks/
 TVI-LFM/datasets/
+TVI-LFM/external/Self-Correction-Human-Parsing/
 TVI-LFM/logs/
 TVI-LFM/outputs/
 TVI-LFM/network/clip_model/data/

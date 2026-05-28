@@ -332,27 +332,41 @@ class ViTBackboneBase(nn.Module):
         msg = self.vit.load_state_dict(state_dict, strict=False)
         return msg
 
-    def pool_tokens(self, tokens):
+    def pool_tokens(self, tokens, part_masks=None):
         raise NotImplementedError
 
-    def forward(self, images, return_tokens=False):
+    def forward(self, images, part_masks=None, return_tokens=False):
         tokens = self.vit.forward_features(images)
-        features, patch_scores = self.pool_tokens(tokens)
-        outputs = {"features": features, "patch_scores": patch_scores}
+        pooled = self.pool_tokens(tokens, part_masks=part_masks)
+        if isinstance(pooled, dict):
+            outputs = pooled
+        else:
+            features, patch_scores = pooled
+            outputs = {"features": features, "patch_scores": patch_scores}
         if return_tokens:
             outputs["tokens"] = tokens
         return outputs
 
 
 class StandardViTBackbone(ViTBackboneBase):
-    def pool_tokens(self, tokens):
+    def pool_tokens(self, tokens, part_masks=None):
         features = self.vit.forward_head(tokens, pre_logits=True)
         patch_tokens = tokens[:, self.vit.num_prefix_tokens:]
         patch_scores = patch_tokens.norm(dim=-1)
         return features, patch_scores
 
 
-class LASTViTBackbone(ViTBackboneBase):
+class PatchMeanViTBackbone(ViTBackboneBase):
+    def pool_tokens(self, tokens, part_masks=None):
+        patch_tokens = tokens[:, self.vit.num_prefix_tokens:]
+        patch_scores = patch_tokens.norm(dim=-1)
+        features = patch_tokens.mean(dim=1)
+        features = self.vit.fc_norm(features)
+        features = self.vit.head_drop(features)
+        return features, patch_scores
+
+
+class SCHPGuidedPartPatchMeanBackbone(ViTBackboneBase):
     def __init__(
         self,
         model_name,
@@ -360,9 +374,11 @@ class LASTViTBackbone(ViTBackboneBase):
         drop_path_rate=0.0,
         image_size=None,
         patch_embed_config=None,
-        topk=1,
-        part_token_config=None,
-        eps=1e-6,
+        num_parts=4,
+        part_temperature=0.7,
+        part_prior_bias=2.0,
+        part_fusion_gamma_init=0.8,
+        min_prior_pixels=1.0,
     ):
         super().__init__(
             model_name=model_name,
@@ -371,120 +387,84 @@ class LASTViTBackbone(ViTBackboneBase):
             image_size=image_size,
             patch_embed_config=patch_embed_config,
         )
-        self.topk = topk
-        self.eps = eps
-        self.part_token_config = part_token_config or {}
-        self.use_part_tokens = bool(self.part_token_config.get("enabled", False))
-        self.num_parts = int(self.part_token_config.get("num_parts", 3))
-        self.topk_per_part = int(self.part_token_config.get("topk_per_part", 4))
-        self.include_global_token = bool(self.part_token_config.get("include_global", True))
-        self.include_cls_token = bool(self.part_token_config.get("include_cls_token", True))
-        if self.use_part_tokens and self.num_parts <= 0:
-            raise ValueError("part_token_config.num_parts must be positive")
-
-        self.row_part_indices = self._build_row_part_indices() if self.use_part_tokens else []
-        fusion_token_count = 0
-        if self.include_global_token:
-            fusion_token_count += 1
-        if self.include_cls_token:
-            fusion_token_count += 1
-        fusion_token_count += len(self.row_part_indices)
-        self.part_token_gate = nn.Linear(self.feature_dim, 1) if self.use_part_tokens and fusion_token_count > 1 else None
-        self.register_buffer("cached_kernel", None, persistent=False)
-
-    @staticmethod
-    def gaussian_kernel_1d(kernel_size, sigma, device):
-        radius = torch.arange(-kernel_size // 2 + 1, kernel_size // 2 + 1, device=device).float()
-        kernel = torch.exp(-0.5 * (radius / sigma) ** 2)
-        return kernel / kernel.max()
-
-    def _get_kernel(self, dim, device):
-        cached = self.cached_kernel
-        if cached is None or cached.shape[-1] != dim or cached.device != device:
-            kernel = self.gaussian_kernel_1d(dim, dim ** 0.5, device=device).view(1, 1, dim)
-            self.cached_kernel = kernel
-            return kernel
-        return cached
-
-    def _build_row_part_indices(self):
-        grid_h, grid_w = tuple(self.vit.patch_embed.grid_size)
-        row_splits = torch.linspace(0, grid_h, steps=self.num_parts + 1).round().to(dtype=torch.long)
-        part_indices = []
-        for part_idx in range(self.num_parts):
-            start = int(row_splits[part_idx].item())
-            end = int(row_splits[part_idx + 1].item())
-            if end <= start:
-                continue
-            indices = []
-            for row in range(start, end):
-                row_offset = row * grid_w
-                indices.extend(range(row_offset, row_offset + grid_w))
-            if indices:
-                part_indices.append(torch.tensor(indices, dtype=torch.long))
-        if not part_indices:
-            raise ValueError("part_token_config produced empty row partitions")
-        return part_indices
-
-    @staticmethod
-    def _gather_topk_tokens(patch_tokens, scores, topk):
-        topk = max(1, min(topk, scores.shape[1]))
-        indices = scores.topk(k=topk, dim=1, largest=True).indices
-        selected = torch.gather(
-            patch_tokens,
-            1,
-            indices.unsqueeze(-1).expand(-1, -1, patch_tokens.shape[-1]),
+        self.num_parts = int(num_parts)
+        self.part_temperature = float(part_temperature)
+        self.part_prior_bias = float(part_prior_bias)
+        self.min_prior_pixels = float(min_prior_pixels)
+        self.part_score_norm = nn.LayerNorm(self.feature_dim)
+        self.part_score = nn.Linear(self.feature_dim, 1)
+        self.part_gate = nn.Sequential(
+            nn.LayerNorm(self.feature_dim),
+            nn.Linear(self.feature_dim, max(self.feature_dim // 4, 32)),
+            nn.ReLU(inplace=True),
+            nn.Linear(max(self.feature_dim // 4, 32), 1),
         )
-        return selected.mean(dim=1)
+        self.part_fusion_gamma = nn.Parameter(torch.tensor(float(part_fusion_gamma_init)))
+        self.part_drop = nn.Dropout(p=0.0)
+        nn.init.zeros_(self.part_score.weight)
+        nn.init.zeros_(self.part_score.bias)
 
-    def pool_tokens(self, tokens):
+    def _horizontal_priors(self, batch_size, grid_height, grid_width, device, dtype):
+        priors = torch.zeros(batch_size, self.num_parts, grid_height, grid_width, device=device, dtype=dtype)
+        for part_index in range(self.num_parts):
+            y0 = int(round(part_index * grid_height / float(self.num_parts)))
+            y1 = int(round((part_index + 1) * grid_height / float(self.num_parts)))
+            priors[:, part_index, y0:y1, :] = 1.0
+        return priors
+
+    def _part_priors(self, part_masks, batch_size, grid_height, grid_width, device, dtype):
+        horizontal = self._horizontal_priors(batch_size, grid_height, grid_width, device, dtype)
+        if part_masks is None:
+            return horizontal
+        priors = part_masks.to(device=device, dtype=dtype)
+        if priors.ndim != 4:
+            raise ValueError("part_masks must be [B, P, H, W], got {}".format(tuple(priors.shape)))
+        if priors.shape[1] != self.num_parts:
+            raise ValueError("part_masks has {} parts, expected {}".format(priors.shape[1], self.num_parts))
+        priors = F.interpolate(priors, size=(grid_height, grid_width), mode="area").clamp_(0.0, 1.0)
+        part_area = priors.flatten(2).sum(dim=-1, keepdim=True).unsqueeze(-1)
+        missing = part_area < self.min_prior_pixels
+        return torch.where(missing, horizontal, priors)
+
+    def pool_tokens(self, tokens, part_masks=None):
         patch_tokens = tokens[:, self.vit.num_prefix_tokens:]
-        kernel = self._get_kernel(patch_tokens.shape[-1], patch_tokens.device)
-        spectrum = torch.fft.fft(patch_tokens, dim=-1)
-        spectrum = torch.fft.fftshift(spectrum, dim=-1)
-        spectrum = spectrum * kernel
-        spectrum = torch.fft.ifftshift(spectrum, dim=-1)
-        smoothed = torch.fft.ifft(spectrum, dim=-1).real
+        batch_size, token_count, _ = patch_tokens.shape
+        grid_height, grid_width = tuple(self.vit.patch_embed.grid_size)
+        if grid_height * grid_width != token_count:
+            raise ValueError(
+                "Patch token count {} does not match grid {}x{}".format(token_count, grid_height, grid_width)
+            )
 
-        diff = patch_tokens / (smoothed - patch_tokens).abs().clamp_min(self.eps)
-        scores = diff.mean(dim=-1)
+        patch_scores = patch_tokens.norm(dim=-1)
+        global_features = patch_tokens.mean(dim=1)
+        global_features = self.vit.fc_norm(global_features)
+        global_features = self.vit.head_drop(global_features)
 
-        global_feature = self._gather_topk_tokens(patch_tokens, scores, self.topk)
-        features = global_feature
-        if self.use_part_tokens:
-            token_groups = []
-            if self.include_global_token:
-                token_groups.append(global_feature)
-            if self.include_cls_token:
-                token_groups.append(tokens[:, 0])
+        priors = self._part_priors(
+            part_masks,
+            batch_size=batch_size,
+            grid_height=grid_height,
+            grid_width=grid_width,
+            device=patch_tokens.device,
+            dtype=patch_tokens.dtype,
+        ).flatten(2)
 
-            for part_indices in self.row_part_indices:
-                part_indices = part_indices.to(device=scores.device)
-                part_scores = scores.index_select(1, part_indices)
-                part_topk = max(1, min(self.topk_per_part, part_scores.shape[1]))
-                local_topk_idx = part_scores.topk(k=part_topk, dim=1, largest=True).indices
-                expanded_indices = part_indices.unsqueeze(0).expand(local_topk_idx.shape[0], -1)
-                selected_absolute_idx = torch.gather(expanded_indices, 1, local_topk_idx)
-                selected_tokens = torch.gather(
-                    patch_tokens,
-                    1,
-                    selected_absolute_idx.unsqueeze(-1).expand(-1, -1, patch_tokens.shape[-1]),
-                )
-                token_groups.append(selected_tokens.mean(dim=1))
+        learned_scores = self.part_score(self.part_score_norm(patch_tokens)).squeeze(-1)
+        logits = learned_scores.unsqueeze(1) / max(self.part_temperature, 1e-6)
+        logits = logits + self.part_prior_bias * priors
+        weights = torch.softmax(logits, dim=-1)
+        part_features = torch.einsum("bpn,bnc->bpc", weights, patch_tokens)
+        part_features = self.vit.fc_norm(part_features)
 
-            if len(token_groups) == 1:
-                features = token_groups[0]
-            else:
-                stacked_tokens = torch.stack(token_groups, dim=1)
-                if self.part_token_gate is None:
-                    features = stacked_tokens.mean(dim=1)
-                else:
-                    gate_logits = self.part_token_gate(stacked_tokens).squeeze(-1)
-                    gate_weights = torch.softmax(gate_logits, dim=1)
-                    features = (stacked_tokens * gate_weights.unsqueeze(-1)).sum(dim=1)
-
-        features = self.vit.fc_norm(features)
-        features = self.vit.head_drop(features)
-        return features, scores
+        gates = torch.sigmoid(self.part_gate(part_features))
+        fused_part = (gates * part_features).sum(dim=1) / gates.sum(dim=1).clamp_min(1e-6)
+        features = global_features + self.part_fusion_gamma * self.part_drop(fused_part)
+        return {
+            "features": features,
+            "patch_scores": patch_scores,
+            "part_features": part_features,
+            "part_gates": gates.squeeze(-1),
+        }
 
 
 def build_backbone(model_config):
@@ -497,10 +477,16 @@ def build_backbone(model_config):
     }
     if model_config["type"] == "baseline":
         return StandardViTBackbone(**common_kwargs)
-    if model_config["type"] == "lastvit":
-        return LASTViTBackbone(
-            topk=model_config.get("topk", 1),
-            part_token_config=model_config.get("part_token"),
-            **common_kwargs
+    if model_config["type"] == "patch_mean":
+        return PatchMeanViTBackbone(**common_kwargs)
+    if model_config["type"] == "schp_part_patch_mean":
+        part_config = model_config.get("part_aggregation", {})
+        return SCHPGuidedPartPatchMeanBackbone(
+            **common_kwargs,
+            num_parts=part_config.get("num_parts", 4),
+            part_temperature=part_config.get("temperature", 0.7),
+            part_prior_bias=part_config.get("prior_bias", 2.0),
+            part_fusion_gamma_init=part_config.get("fusion_gamma_init", 0.8),
+            min_prior_pixels=part_config.get("min_prior_pixels", 1.0),
         )
     raise ValueError("Unknown model type: {}".format(model_config["type"]))

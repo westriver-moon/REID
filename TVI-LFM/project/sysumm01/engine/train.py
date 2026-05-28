@@ -131,6 +131,15 @@ def build_scheduler(optimizer, train_config):
     raise ValueError("Unsupported scheduler: {}".format(scheduler_name))
 
 
+def get_schp_eval_kwargs(config):
+    eval_config = config.get("eval", {})
+    return {
+        "schp_mask_root": eval_config.get("schp_mask_root"),
+        "schp_min_part_pixels": eval_config.get("schp_min_part_pixels", 4),
+        "schp_allow_fallback": eval_config.get("schp_allow_fallback", True),
+    }
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Train the local SYSU-MM01 model")
     parser.add_argument("--config", required=True)
@@ -202,6 +211,7 @@ def evaluate_and_save(model, config, output_dir, device, epoch, num_trials):
         seed=config["seed"] + epoch,
         protocol=protocol,
         modality=modality,
+        **get_schp_eval_kwargs(config),
     )
     payload = {"metrics": all_metrics, "retrieval_examples": all_retrievals, "epoch": epoch}
     dump_json(payload, os.path.join(eval_dir, "{}_epoch_{:03d}.json".format(primary_mode, epoch)))
@@ -349,6 +359,19 @@ def compute_reid_losses(outputs, labels, batch, ce_criterion, triplet_criterion,
     return loss_config.get("id_weight", 1.0) * id_loss, loss_config.get("triplet_weight", 1.0) * tri_loss
 
 
+def compute_part_id_loss(outputs, labels, ce_criterion, loss_config):
+    weight = float(loss_config.get("part_id_weight", 0.0) or 0.0)
+    if weight <= 0.0 or "part_logits" not in outputs:
+        return outputs["global_feat"].new_tensor(0.0)
+    part_logits = outputs["part_logits"]
+    if part_logits.ndim != 3:
+        raise ValueError("part_logits must be [B, P, num_classes], got {}".format(tuple(part_logits.shape)))
+    part_count = part_logits.shape[1]
+    flat_logits = part_logits.reshape(part_logits.shape[0] * part_count, part_logits.shape[2])
+    flat_labels = labels.unsqueeze(1).expand(-1, part_count).reshape(-1)
+    return weight * ce_criterion(flat_logits, flat_labels)
+
+
 def get_final_eval_modes(config):
     primary_mode = config["eval"].get("primary_mode", "all")
     modes = [primary_mode]
@@ -409,6 +432,7 @@ def evaluate_topk_checkpoints(model, config, output_dir, device, top_records):
                 seed=config["seed"],
                 protocol=config["eval"].get("protocol", "cross_modality"),
                 modality=config["eval"].get("modality"),
+                **get_schp_eval_kwargs(config),
             )
             epoch_payload["metrics"][eval_mode] = metrics
             dump_json(
@@ -473,6 +497,9 @@ def main():
                 vcm_frame_sampling=config["dataset"].get("vcm_frame_sampling", "random"),
                 vcm_frames_per_tracklet=config["dataset"].get("vcm_frames_per_tracklet", 1),
                 train_augment=config["dataset"].get("train_augment", "strong_reid"),
+                schp_mask_root=config["dataset"].get("schp_mask_root"),
+                schp_min_part_pixels=config["dataset"].get("schp_min_part_pixels", 4),
+                schp_allow_fallback=config["dataset"].get("schp_allow_fallback", True),
             )
         else:
             raise ValueError("Unsupported dataset.name: {}".format(dataset_name))
@@ -592,10 +619,11 @@ def main():
                     device=device,
                     mode=eval_mode,
                     num_trials=config["eval"]["num_trials"],
-                    seed=config["seed"],
-                    protocol=config["eval"].get("protocol", "cross_modality"),
-                    modality=config["eval"].get("modality"),
-                )
+                        seed=config["seed"],
+                        protocol=config["eval"].get("protocol", "cross_modality"),
+                        modality=config["eval"].get("modality"),
+                        **get_schp_eval_kwargs(config),
+                    )
                 dump_json(
                     {"metrics": metrics, "retrieval_examples": retrievals},
                     os.path.join(output_dir, "eval_{}_final.json".format(eval_mode)),
@@ -609,6 +637,7 @@ def main():
             "id_loss",
             "triplet_loss",
             "consistency_loss",
+            "part_id_loss",
             "all_mAP",
             "all_rank1",
             "epoch_seconds",
@@ -639,6 +668,7 @@ def main():
             id_meter = AverageMeter()
             triplet_meter = AverageMeter()
             consistency_meter = AverageMeter()
+            part_id_meter = AverageMeter()
             num_steps = len(train_loader)
 
             print(
@@ -649,13 +679,16 @@ def main():
             for step, batch in enumerate(train_loader, start=1):
                 images = batch["image"].to(device, non_blocking=True)
                 labels = batch["label"].to(device, non_blocking=True)
+                part_masks = batch.get("part_masks")
+                if part_masks is not None:
+                    part_masks = part_masks.to(device, non_blocking=True)
                 tracklet_groups = batch.get("tracklet_group")
                 if tracklet_groups is not None:
                     tracklet_groups = tracklet_groups.to(device, non_blocking=True)
                 optimizer.zero_grad()
 
                 with autocast(enabled=scaler.is_enabled()):
-                    outputs = model(images)
+                    outputs = model(images, part_masks=part_masks)
                     id_loss, tri_loss = compute_reid_losses(
                         outputs,
                         labels,
@@ -669,7 +702,8 @@ def main():
                         consistency_loss = tracklet_consistency_loss(outputs["embeddings"], tracklet_groups)
                     else:
                         consistency_loss = outputs["global_feat"].new_tensor(0.0)
-                    total_loss = id_loss + tri_loss + consistency_weight * consistency_loss
+                    part_id_loss = compute_part_id_loss(outputs, labels, ce_criterion, config["loss"])
+                    total_loss = id_loss + tri_loss + consistency_weight * consistency_loss + part_id_loss
 
                 scaler.scale(total_loss).backward()
                 if config["train"].get("clip_grad_norm", 0.0) > 0:
@@ -683,10 +717,11 @@ def main():
                 id_meter.update(id_loss.item(), batch_size)
                 triplet_meter.update(tri_loss.item(), batch_size)
                 consistency_meter.update(consistency_loss.item(), batch_size)
+                part_id_meter.update(part_id_loss.item(), batch_size)
 
                 if step == 1 or step % max(args.print_freq, 1) == 0 or step == num_steps:
                     print(
-                        "[Epoch {:03d}/{:03d}] step {:04d}/{:04d} lr={:.6g} loss={:.4f} id={:.4f} triplet={:.4f} cons={:.4f}".format(
+                        "[Epoch {:03d}/{:03d}] step {:04d}/{:04d} lr={:.6g} loss={:.4f} id={:.4f} triplet={:.4f} cons={:.4f} part_id={:.4f}".format(
                             epoch,
                             config["train"]["epochs"],
                             step,
@@ -696,6 +731,7 @@ def main():
                             id_meter.avg,
                             triplet_meter.avg,
                             consistency_meter.avg,
+                            part_id_meter.avg,
                         ),
                         flush=True,
                     )
@@ -712,6 +748,7 @@ def main():
                 "id_loss": id_meter.avg,
                 "triplet_loss": triplet_meter.avg,
                 "consistency_loss": consistency_meter.avg,
+                "part_id_loss": part_id_meter.avg,
                 "all_mAP": metrics["mAP"],
                 "all_rank1": metrics["rank1"],
                 "epoch_seconds": epoch_seconds,
@@ -752,6 +789,7 @@ def main():
                 seed=config["seed"],
                 protocol=config["eval"].get("protocol", "cross_modality"),
                 modality=config["eval"].get("modality"),
+                **get_schp_eval_kwargs(config),
             )
             dump_json(
                 {"metrics": metrics, "retrieval_examples": retrievals},

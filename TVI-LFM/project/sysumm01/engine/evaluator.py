@@ -59,8 +59,26 @@ def _compute_map(sorted_indices, query_ids, query_cam_ids, gallery_ids, gallery_
     return avg_precision_sum / valid
 
 
-def _extract_embeddings(model, records, image_size, batch_size, num_workers, device):
-    dataset = SYSUEvalDataset(records=records, image_size=image_size)
+def _extract_embeddings(
+    model,
+    records,
+    image_size,
+    batch_size,
+    num_workers,
+    device,
+    dataset_root,
+    schp_mask_root=None,
+    schp_min_part_pixels=4,
+    schp_allow_fallback=True,
+):
+    dataset = SYSUEvalDataset(
+        records=records,
+        image_size=image_size,
+        schp_mask_root=schp_mask_root,
+        schp_source_root=dataset_root,
+        schp_min_part_pixels=schp_min_part_pixels,
+        schp_allow_fallback=schp_allow_fallback,
+    )
     loader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -77,7 +95,10 @@ def _extract_embeddings(model, records, image_size, batch_size, num_workers, dev
     with torch.no_grad():
         for batch in loader:
             images = batch["image"].to(device, non_blocking=True)
-            embeddings = model.extract_features(images)
+            part_masks = batch.get("part_masks")
+            if part_masks is not None:
+                part_masks = part_masks.to(device, non_blocking=True)
+            embeddings = model.extract_features(images, part_masks=part_masks)
             features.append(embeddings.cpu().numpy())
             pids.append(batch["pid"].numpy())
             camids.append(batch["camid"].numpy())
@@ -126,6 +147,9 @@ def evaluate_sysu(
     seed=42,
     protocol="cross_modality",
     modality=None,
+    schp_mask_root=None,
+    schp_min_part_pixels=4,
+    schp_allow_fallback=True,
 ):
     query_records, gallery_records = build_test_records(
         dataset_root,
@@ -133,8 +157,30 @@ def evaluate_sysu(
         protocol=protocol,
         modality=modality,
     )
-    query_cache = _extract_embeddings(model, query_records, image_size, batch_size, num_workers, device)
-    gallery_cache = _extract_embeddings(model, gallery_records, image_size, batch_size, num_workers, device)
+    query_cache = _extract_embeddings(
+        model,
+        query_records,
+        image_size,
+        batch_size,
+        num_workers,
+        device,
+        dataset_root=dataset_root,
+        schp_mask_root=schp_mask_root,
+        schp_min_part_pixels=schp_min_part_pixels,
+        schp_allow_fallback=schp_allow_fallback,
+    )
+    gallery_cache = _extract_embeddings(
+        model,
+        gallery_records,
+        image_size,
+        batch_size,
+        num_workers,
+        device,
+        dataset_root=dataset_root,
+        schp_mask_root=schp_mask_root,
+        schp_min_part_pixels=schp_min_part_pixels,
+        schp_allow_fallback=schp_allow_fallback,
+    )
 
     query_cam_ids = query_cache["camids"].copy()
     if protocol == "cross_modality":
