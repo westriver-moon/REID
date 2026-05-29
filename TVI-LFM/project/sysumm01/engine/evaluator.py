@@ -70,6 +70,7 @@ def _extract_embeddings(
     schp_mask_root=None,
     schp_min_part_pixels=4,
     schp_allow_fallback=True,
+    schp_quality_index=None,
 ):
     dataset = SYSUEvalDataset(
         records=records,
@@ -78,6 +79,7 @@ def _extract_embeddings(
         schp_source_root=dataset_root,
         schp_min_part_pixels=schp_min_part_pixels,
         schp_allow_fallback=schp_allow_fallback,
+        schp_quality_index=schp_quality_index,
     )
     loader = DataLoader(
         dataset,
@@ -150,6 +152,7 @@ def evaluate_sysu(
     schp_mask_root=None,
     schp_min_part_pixels=4,
     schp_allow_fallback=True,
+    schp_quality_index=None,
 ):
     query_records, gallery_records = build_test_records(
         dataset_root,
@@ -168,6 +171,7 @@ def evaluate_sysu(
         schp_mask_root=schp_mask_root,
         schp_min_part_pixels=schp_min_part_pixels,
         schp_allow_fallback=schp_allow_fallback,
+        schp_quality_index=schp_quality_index,
     )
     gallery_cache = _extract_embeddings(
         model,
@@ -180,6 +184,7 @@ def evaluate_sysu(
         schp_mask_root=schp_mask_root,
         schp_min_part_pixels=schp_min_part_pixels,
         schp_allow_fallback=schp_allow_fallback,
+        schp_quality_index=schp_quality_index,
     )
 
     query_cam_ids = query_cache["camids"].copy()

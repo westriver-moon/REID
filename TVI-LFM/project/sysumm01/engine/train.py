@@ -137,6 +137,7 @@ def get_schp_eval_kwargs(config):
         "schp_mask_root": eval_config.get("schp_mask_root"),
         "schp_min_part_pixels": eval_config.get("schp_min_part_pixels", 4),
         "schp_allow_fallback": eval_config.get("schp_allow_fallback", True),
+        "schp_quality_index": eval_config.get("schp_quality_index"),
     }
 
 
@@ -500,6 +501,7 @@ def main():
                 schp_mask_root=config["dataset"].get("schp_mask_root"),
                 schp_min_part_pixels=config["dataset"].get("schp_min_part_pixels", 4),
                 schp_allow_fallback=config["dataset"].get("schp_allow_fallback", True),
+                schp_quality_index=config["dataset"].get("schp_quality_index"),
             )
         else:
             raise ValueError("Unsupported dataset.name: {}".format(dataset_name))

@@ -9,7 +9,7 @@ from PIL import Image
 from torch.utils.data import BatchSampler, Dataset
 from torchvision import transforms as T
 
-from project.sysumm01.datasets.schp_parts import PairedImagePartTransform, load_part_mask
+from project.sysumm01.datasets.schp_parts import PairedImagePartTransform, load_part_mask, load_quality_index
 
 
 RGB_CAMERAS = (1, 2, 4, 5)
@@ -347,12 +347,14 @@ class SYSUEvalDataset(Dataset):
         schp_source_root=None,
         schp_min_part_pixels=4,
         schp_allow_fallback=True,
+        schp_quality_index=None,
     ):
         self.records = records
         self.schp_mask_root = schp_mask_root
         self.schp_source_root = schp_source_root
         self.schp_min_part_pixels = int(schp_min_part_pixels)
         self.schp_allow_fallback = bool(schp_allow_fallback)
+        self.schp_quality_index = load_quality_index(schp_quality_index)
         self.use_part_masks = schp_mask_root is not None
         if self.use_part_masks:
             self.transform = PairedImagePartTransform(image_size=image_size, training=False, augment="basic")
@@ -374,6 +376,7 @@ class SYSUEvalDataset(Dataset):
                 source_name="sysumm01",
                 min_part_pixels=self.schp_min_part_pixels,
                 allow_fallback=self.schp_allow_fallback,
+                quality_index=self.schp_quality_index,
             )
             tensor, part_mask_tensor = self.transform(image, part_mask)
         else:

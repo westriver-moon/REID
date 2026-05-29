@@ -347,6 +347,12 @@ class ViTBackboneBase(nn.Module):
             outputs["tokens"] = tokens
         return outputs
 
+    def _apply_head_drop(self, features):
+        head_drop = getattr(self.vit, "head_drop", None)
+        if head_drop is None:
+            return features
+        return head_drop(features)
+
 
 class StandardViTBackbone(ViTBackboneBase):
     def pool_tokens(self, tokens, part_masks=None):
@@ -362,7 +368,7 @@ class PatchMeanViTBackbone(ViTBackboneBase):
         patch_scores = patch_tokens.norm(dim=-1)
         features = patch_tokens.mean(dim=1)
         features = self.vit.fc_norm(features)
-        features = self.vit.head_drop(features)
+        features = self._apply_head_drop(features)
         return features, patch_scores
 
 
@@ -438,7 +444,7 @@ class SCHPGuidedPartPatchMeanBackbone(ViTBackboneBase):
         patch_scores = patch_tokens.norm(dim=-1)
         global_features = patch_tokens.mean(dim=1)
         global_features = self.vit.fc_norm(global_features)
-        global_features = self.vit.head_drop(global_features)
+        global_features = self._apply_head_drop(global_features)
 
         priors = self._part_priors(
             part_masks,

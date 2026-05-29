@@ -7,7 +7,7 @@ import torch
 from PIL import Image
 from torch.utils.data import BatchSampler, Dataset
 
-from project.sysumm01.datasets.schp_parts import PairedImagePartTransform, load_part_mask
+from project.sysumm01.datasets.schp_parts import PairedImagePartTransform, load_part_mask, load_quality_index
 from project.sysumm01.datasets.sysumm01 import build_train_records, build_transforms
 
 
@@ -72,6 +72,10 @@ class VCMTrackletDataset(Dataset):
         frame_sampling="random",
         train_augment="strong_reid",
         index_path=None,
+        schp_mask_root=None,
+        schp_min_part_pixels=4,
+        schp_allow_fallback=True,
+        schp_quality_index=None,
     ):
         tracklet_json = tracklet_json or index_path
         if tracklet_json is None:
@@ -83,6 +87,10 @@ class VCMTrackletDataset(Dataset):
         self.root = root
         self.tracklet_json = tracklet_json
         self.mode = normalize_vcm_mode(mode)
+        self.schp_mask_root = schp_mask_root
+        self.schp_min_part_pixels = int(schp_min_part_pixels)
+        self.schp_allow_fallback = bool(schp_allow_fallback)
+        self.schp_quality_index = load_quality_index(schp_quality_index)
         self.frame_sampling = frame_sampling
         if self.frame_sampling not in ("random", "uniform"):
             raise ValueError("frame_sampling must be random or uniform, got {}".format(frame_sampling))
@@ -144,7 +152,15 @@ class VCMTrackletDataset(Dataset):
             raise RuntimeError("No valid identities available for VCM mode={}".format(self.mode))
 
         self.num_classes = len(active_pids)
-        self.transform = build_transforms(image_size=image_size, training=True, augment=train_augment)
+        self.use_part_masks = schp_mask_root is not None
+        if self.use_part_masks:
+            self.transform = PairedImagePartTransform(
+                image_size=image_size,
+                training=True,
+                augment=train_augment,
+            )
+        else:
+            self.transform = build_transforms(image_size=image_size, training=True, augment=train_augment)
         self.metadata = payload.get("metadata", {})
         self.source_counts = self._count_sources()
 
@@ -179,13 +195,29 @@ class VCMTrackletDataset(Dataset):
         sampled_frames = self._sample_frames(item["frames"])
         images = []
         resolved_paths = []
+        part_masks = []
         for frame_path in sampled_frames:
             full_path = _resolve_frame_path(self.root, frame_path)
             image = Image.open(full_path).convert("RGB")
-            images.append(self.transform(image))
+            if self.use_part_masks:
+                part_mask = load_part_mask(
+                    full_path,
+                    image_size=image.size,
+                    mask_root=self.schp_mask_root,
+                    source_root=self.root,
+                    source_name="vcm",
+                    min_part_pixels=self.schp_min_part_pixels,
+                    allow_fallback=self.schp_allow_fallback,
+                    quality_index=self.schp_quality_index,
+                )
+                image_tensor, part_mask_tensor = self.transform(image, part_mask)
+                images.append(image_tensor)
+                part_masks.append(part_mask_tensor)
+            else:
+                images.append(self.transform(image))
             resolved_paths.append(full_path)
 
-        return {
+        result = {
             "images": torch.stack(images, dim=0),
             "label": item["label"],
             "pid": item["pid"],
@@ -194,6 +226,9 @@ class VCMTrackletDataset(Dataset):
             "tracklet_id": item["tracklet_id"],
             "frame_paths": resolved_paths,
         }
+        if part_masks:
+            result["part_masks"] = torch.stack(part_masks, dim=0)
+        return result
 
 
 class IdentityModalityBalancedTrackletSampler(BatchSampler):
@@ -279,6 +314,7 @@ class SYSUIRVCMIRDataset(Dataset):
         schp_mask_root=None,
         schp_min_part_pixels=4,
         schp_allow_fallback=True,
+        schp_quality_index=None,
     ):
         self.vcm_root = vcm_root
         self.sysu_root = sysu_root
@@ -297,6 +333,7 @@ class SYSUIRVCMIRDataset(Dataset):
         self.schp_mask_root = schp_mask_root
         self.schp_min_part_pixels = int(schp_min_part_pixels)
         self.schp_allow_fallback = bool(schp_allow_fallback)
+        self.schp_quality_index = load_quality_index(schp_quality_index)
         self.use_part_masks = schp_mask_root is not None
         if self.use_part_masks:
             self.transform = PairedImagePartTransform(
@@ -440,6 +477,7 @@ class SYSUIRVCMIRDataset(Dataset):
                     source_name=source_name,
                     min_part_pixels=self.schp_min_part_pixels,
                     allow_fallback=self.schp_allow_fallback,
+                    quality_index=self.schp_quality_index,
                 )
                 image_tensor, part_mask_tensor = self.transform(image, part_mask)
                 images.append(image_tensor)
