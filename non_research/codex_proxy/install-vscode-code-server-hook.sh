@@ -2,13 +2,22 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMMIT="${1:-f6cfa2ea2403534de03f069bdf160d06451ed282}"
+if [ "${1:-}" != "" ]; then
+  COMMIT="$1"
+else
+  COMMIT="$(find /home/cgv841/.vscode-server/bin -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | tail -n 1)"
+fi
 TARGET="/home/cgv841/.vscode-server/bin/${COMMIT}/bin/code-server"
 BACKUP_DIR="${SCRIPT_DIR}/backups"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 MARKER="CODEX_PROXY_HOOK"
 
 mkdir -p "${BACKUP_DIR}"
+
+if [ -z "${COMMIT}" ]; then
+  echo "no vscode-server commit directory found" >&2
+  exit 1
+fi
 
 if [ ! -f "${TARGET}" ]; then
   echo "missing ${TARGET}" >&2

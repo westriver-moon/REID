@@ -1,10 +1,10 @@
+import json
 import os
 import random
-import json
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageFilter, ImageOps
 from torchvision import transforms as T
 from torchvision.transforms import functional as TF
 
@@ -123,6 +123,11 @@ def make_quality_key(image_path, source_root, source_name):
     return "{}/{}".format(source_name, rel_stem)
 
 
+def make_quality_key_from_relative_path(relative_path, source_name):
+    rel_stem = os.path.splitext(str(relative_path).replace("\\", "/"))[0]
+    return "{}/{}".format(source_name, rel_stem)
+
+
 def load_quality_index(index_path):
     if index_path is None:
         return None
@@ -133,6 +138,24 @@ def load_quality_index(index_path):
     if isinstance(payload, dict):
         return payload
     raise ValueError("Invalid SCHP quality index: {}".format(index_path))
+
+
+def lookup_quality_entry(
+    quality_index,
+    image_path=None,
+    source_root=None,
+    source_name=None,
+    relative_path=None,
+):
+    if quality_index is None or source_name is None:
+        return None
+    if relative_path is not None:
+        quality_key = make_quality_key_from_relative_path(relative_path, source_name)
+    elif image_path is not None and source_root is not None:
+        quality_key = make_quality_key(image_path, source_root, source_name)
+    else:
+        raise ValueError("lookup_quality_entry needs either relative_path or image_path + source_root")
+    return quality_index.get(quality_key)
 
 
 def labels_to_part_mask(label_mask, min_part_pixels=4, fallback_missing_parts=True):
@@ -203,12 +226,15 @@ class PairedImagePartTransform:
         augment="basic",
         mean=(0.485, 0.456, 0.406),
         std=(0.229, 0.224, 0.225),
+        schp_aug_config=None,
     ):
         self.height, self.width = image_size
         self.training = training
         self.augment = augment
         self.mean = mean
         self.std = std
+        self.schp_aug_config = dict(schp_aug_config or {})
+        self.schp_aug_enabled = bool(self.schp_aug_config.get("enabled", False))
         self.random_erasing = T.RandomErasing(p=0.5, value=mean) if training and augment == "strong_reid" else None
         if augment not in ("basic", "strong_reid"):
             raise ValueError("Unsupported training augment: {}".format(augment))
@@ -221,9 +247,46 @@ class PairedImagePartTransform:
         ]
         return image, masks
 
-    def __call__(self, image, part_mask):
+    @staticmethod
+    def _combined_foreground_mask(masks):
+        combined = np.zeros((masks[0].height, masks[0].width), dtype=np.uint8)
+        for mask in masks:
+            combined |= (np.asarray(mask, dtype=np.uint8) > 0).astype(np.uint8) * 255
+        return Image.fromarray(combined, mode="L")
+
+    @staticmethod
+    def _invert_mask(mask):
+        return Image.fromarray(255 - np.asarray(mask, dtype=np.uint8), mode="L")
+
+    def _apply_background_suppress(self, image, masks):
+        if not masks:
+            return image
+        foreground_mask = self._combined_foreground_mask(masks)
+        background_mask = self._invert_mask(foreground_mask)
+
+        blur_prob = float(self.schp_aug_config.get("blur_prob", 0.4))
+        gray_prob = float(self.schp_aug_config.get("gray_prob", 0.2))
+        dim_prob = float(self.schp_aug_config.get("dim_prob", 0.3))
+        dim_factor = float(self.schp_aug_config.get("dim_factor", 0.35))
+
+        if random.random() < blur_prob:
+            blurred = image.filter(ImageFilter.GaussianBlur(radius=2.0))
+            image = Image.composite(image, blurred, foreground_mask)
+        if random.random() < gray_prob:
+            gray = ImageOps.grayscale(image).convert("RGB")
+            image = Image.composite(image, gray, foreground_mask)
+        if random.random() < dim_prob:
+            image_np = np.asarray(image, dtype=np.float32)
+            bg = (np.asarray(background_mask, dtype=np.float32) / 255.0)[..., None]
+            image_np = image_np * (1.0 - bg) + image_np * dim_factor * bg
+            image = Image.fromarray(np.clip(image_np, 0, 255).astype(np.uint8))
+        return image
+
+    def __call__(self, image, part_mask, apply_mask_aware_aug=None):
         masks = _mask_to_pil_list(part_mask)
         image, masks = self._resize(image, masks)
+        if apply_mask_aware_aug is None:
+            apply_mask_aware_aug = self.schp_aug_enabled
 
         if self.training:
             if self.augment == "strong_reid":
@@ -235,6 +298,11 @@ class PairedImagePartTransform:
             if random.random() < 0.5:
                 image = TF.hflip(image)
                 masks = [TF.hflip(mask) for mask in masks]
+            if apply_mask_aware_aug and self.schp_aug_enabled:
+                mode = self.schp_aug_config.get("mode", "background_suppress")
+                prob = float(self.schp_aug_config.get("prob", 0.5))
+                if mode == "background_suppress" and random.random() < prob:
+                    image = self._apply_background_suppress(image, masks)
 
         image_tensor = TF.to_tensor(image)
         image_tensor = TF.normalize(image_tensor, self.mean, self.std)

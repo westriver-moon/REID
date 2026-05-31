@@ -502,6 +502,10 @@ def main():
                 schp_min_part_pixels=config["dataset"].get("schp_min_part_pixels", 4),
                 schp_allow_fallback=config["dataset"].get("schp_allow_fallback", True),
                 schp_quality_index=config["dataset"].get("schp_quality_index"),
+                schp_aug=config["dataset"].get("schp_aug"),
+                return_part_masks=config["model"]["type"] == "schp_part_patch_mean",
+                vcm_sampling_top_ratio=config["dataset"].get("vcm_sampling_top_ratio", 0.5),
+                vcm_sampling_temperature=config["dataset"].get("vcm_sampling_temperature", 0.7),
             )
         else:
             raise ValueError("Unsupported dataset.name: {}".format(dataset_name))

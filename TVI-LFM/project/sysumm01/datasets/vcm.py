@@ -7,7 +7,12 @@ import torch
 from PIL import Image
 from torch.utils.data import BatchSampler, Dataset
 
-from project.sysumm01.datasets.schp_parts import PairedImagePartTransform, load_part_mask, load_quality_index
+from project.sysumm01.datasets.schp_parts import (
+    PairedImagePartTransform,
+    load_part_mask,
+    load_quality_index,
+    lookup_quality_entry,
+)
 from project.sysumm01.datasets.sysumm01 import build_train_records, build_transforms
 
 
@@ -315,14 +320,22 @@ class SYSUIRVCMIRDataset(Dataset):
         schp_min_part_pixels=4,
         schp_allow_fallback=True,
         schp_quality_index=None,
+        schp_aug=None,
+        return_part_masks=False,
+        vcm_sampling_top_ratio=0.5,
+        vcm_sampling_temperature=0.7,
     ):
         self.vcm_root = vcm_root
         self.sysu_root = sysu_root
         self.tracklet_json = vcm_tracklet_json
         self.mode = "sysu_ir_vcm_ir"
         self.vcm_frame_sampling = vcm_frame_sampling
-        if self.vcm_frame_sampling not in ("random", "uniform"):
-            raise ValueError("vcm_frame_sampling must be random or uniform, got {}".format(vcm_frame_sampling))
+        if self.vcm_frame_sampling not in ("random", "uniform", "schp_top_pool", "schp_weighted"):
+            raise ValueError(
+                "vcm_frame_sampling must be one of random, uniform, schp_top_pool, schp_weighted, got {}".format(
+                    vcm_frame_sampling
+                )
+            )
         self.vcm_frames_per_tracklet = int(vcm_frames_per_tracklet)
         if self.vcm_frames_per_tracklet < 1 or self.vcm_frames_per_tracklet > 4:
             raise ValueError(
@@ -334,12 +347,18 @@ class SYSUIRVCMIRDataset(Dataset):
         self.schp_min_part_pixels = int(schp_min_part_pixels)
         self.schp_allow_fallback = bool(schp_allow_fallback)
         self.schp_quality_index = load_quality_index(schp_quality_index)
-        self.use_part_masks = schp_mask_root is not None
-        if self.use_part_masks:
+        self.schp_aug = dict(schp_aug or {})
+        self.schp_aug_enabled = bool(self.schp_aug.get("enabled", False))
+        self.return_part_masks = bool(return_part_masks)
+        self.vcm_sampling_top_ratio = float(vcm_sampling_top_ratio)
+        self.vcm_sampling_temperature = float(vcm_sampling_temperature)
+        self.use_mask_pipeline = schp_mask_root is not None and (self.schp_aug_enabled or self.return_part_masks)
+        if self.use_mask_pipeline:
             self.transform = PairedImagePartTransform(
                 image_size=image_size,
                 training=True,
                 augment=train_augment,
+                schp_aug_config=self.schp_aug,
             )
         else:
             self.transform = build_transforms(image_size=image_size, training=True, augment=train_augment)
@@ -389,6 +408,7 @@ class SYSUIRVCMIRDataset(Dataset):
                     "camid": int(item["camid"]),
                     "modality": "ir",
                     "frames": list(frames),
+                    "frame_quality": [self._get_vcm_quality_entry(frame_path) for frame_path in frames],
                 }
             )
         if not vcm_raw:
@@ -445,12 +465,72 @@ class SYSUIRVCMIRDataset(Dataset):
                 counts["sysu_ir_images"] += 1
         return counts
 
+    def _get_vcm_quality_entry(self, frame_path):
+        return lookup_quality_entry(
+            self.schp_quality_index,
+            relative_path=frame_path,
+            source_name="vcm",
+        )
+
+    def _get_sysu_quality_entry(self, full_path):
+        return lookup_quality_entry(
+            self.schp_quality_index,
+            image_path=full_path,
+            source_root=self.sysu_root,
+            source_name="sysumm01",
+        )
+
     def __len__(self):
         return len(self.samples)
 
-    def _sample_vcm_frames(self, frames):
+    @staticmethod
+    def _weighted_sample_without_replacement(candidates, weights, count):
+        chosen = []
+        candidate_pool = list(candidates)
+        weight_pool = list(weights)
+        for _ in range(min(count, len(candidate_pool))):
+            weight_sum = sum(weight_pool)
+            if weight_sum <= 0:
+                picked = random.choice(candidate_pool)
+            else:
+                picked = random.choices(candidate_pool, weights=weight_pool, k=1)[0]
+            picked_index = candidate_pool.index(picked)
+            chosen.append(picked)
+            del candidate_pool[picked_index]
+            del weight_pool[picked_index]
+        return chosen
+
+    def _sample_vcm_frames(self, frames, frame_quality=None):
         if self.vcm_frame_sampling == "uniform":
             return _uniform_sample(frames, self.vcm_frames_per_tracklet)
+        if self.vcm_frame_sampling in ("schp_top_pool", "schp_weighted"):
+            frame_quality = frame_quality or [None] * len(frames)
+            quality_ok_indices = [
+                idx for idx, entry in enumerate(frame_quality) if entry is not None and bool(entry.get("quality_ok", False))
+            ]
+            candidate_indices = quality_ok_indices if quality_ok_indices else list(range(len(frames)))
+            if self.vcm_frame_sampling == "schp_top_pool":
+                scored = sorted(
+                    candidate_indices,
+                    key=lambda idx: float((frame_quality[idx] or {}).get("quality_score", 0.0)),
+                    reverse=True,
+                )
+                keep = max(1, int(round(len(scored) * self.vcm_sampling_top_ratio)))
+                candidate_indices = scored[:keep]
+                chosen_indices = _sample(candidate_indices, self.vcm_frames_per_tracklet, random)
+                return [frames[index] for index in chosen_indices]
+
+            temperature = max(self.vcm_sampling_temperature, 1e-6)
+            scores = [float((frame_quality[idx] or {}).get("quality_score", 0.0)) for idx in candidate_indices]
+            weights = [pow(2.718281828, score / temperature) for score in scores]
+            chosen_indices = self._weighted_sample_without_replacement(
+                candidate_indices,
+                weights,
+                self.vcm_frames_per_tracklet,
+            )
+            if len(chosen_indices) < self.vcm_frames_per_tracklet:
+                chosen_indices.extend(_sample(candidate_indices, self.vcm_frames_per_tracklet - len(chosen_indices), random))
+            return [frames[index] for index in chosen_indices]
         if len(frames) >= self.vcm_frames_per_tracklet:
             return random.sample(frames, self.vcm_frames_per_tracklet)
         return [random.choice(frames) for _ in range(self.vcm_frames_per_tracklet)]
@@ -458,7 +538,7 @@ class SYSUIRVCMIRDataset(Dataset):
     def __getitem__(self, index):
         item = self.samples[index]
         if item["sample_type"] == "tracklet":
-            frame_paths = self._sample_vcm_frames(item["frames"])
+            frame_paths = self._sample_vcm_frames(item["frames"], frame_quality=item.get("frame_quality"))
             full_paths = [_resolve_frame_path(self.vcm_root, frame_path) for frame_path in frame_paths]
         else:
             full_paths = [item["path"]]
@@ -466,7 +546,18 @@ class SYSUIRVCMIRDataset(Dataset):
         part_masks = []
         for full_path in full_paths:
             image = Image.open(full_path).convert("RGB")
-            if self.use_part_masks:
+            quality_entry = None
+            if item["source"] == "vcm":
+                rel_path = os.path.relpath(full_path, self.vcm_root)
+                quality_entry = lookup_quality_entry(
+                    self.schp_quality_index,
+                    relative_path=rel_path,
+                    source_name="vcm",
+                )
+            elif item["source"] == "sysumm01_ir":
+                quality_entry = self._get_sysu_quality_entry(full_path)
+            apply_schp_aug = bool(quality_entry and quality_entry.get("quality_ok", False))
+            if self.use_mask_pipeline:
                 source_root = self.vcm_root if item["source"] == "vcm" else self.sysu_root
                 source_name = "vcm" if item["source"] == "vcm" else "sysumm01"
                 part_mask = load_part_mask(
@@ -479,9 +570,14 @@ class SYSUIRVCMIRDataset(Dataset):
                     allow_fallback=self.schp_allow_fallback,
                     quality_index=self.schp_quality_index,
                 )
-                image_tensor, part_mask_tensor = self.transform(image, part_mask)
+                image_tensor, part_mask_tensor = self.transform(
+                    image,
+                    part_mask,
+                    apply_mask_aware_aug=apply_schp_aug,
+                )
                 images.append(image_tensor)
-                part_masks.append(part_mask_tensor)
+                if self.return_part_masks:
+                    part_masks.append(part_mask_tensor)
             else:
                 images.append(self.transform(image))
         result = {

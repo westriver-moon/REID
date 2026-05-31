@@ -46,6 +46,7 @@ TVI-LFM/.git/
 TVI-LFM/.git.backup*/
 TVI-LFM/base_model/
 TVI-LFM/data/schp_masks/
+TVI-LFM/data/schp_quality/
 TVI-LFM/datasets/
 TVI-LFM/external/Self-Correction-Human-Parsing/
 TVI-LFM/logs/
