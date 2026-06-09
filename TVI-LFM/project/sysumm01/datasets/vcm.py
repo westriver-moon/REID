@@ -41,6 +41,17 @@ def _resolve_frame_path(root, frame_path):
     return os.path.join(root, frame_path)
 
 
+def _filter_existing_frames(root, frames):
+    existing = []
+    missing = 0
+    for frame_path in frames:
+        if os.path.exists(_resolve_frame_path(root, frame_path)):
+            existing.append(frame_path)
+        else:
+            missing += 1
+    return existing, missing
+
+
 def _sample(indices, count, rng):
     if len(indices) >= count:
         return rng.sample(indices, count)
@@ -111,6 +122,8 @@ class VCMTrackletDataset(Dataset):
         }[self.mode]
 
         filtered = []
+        missing_frame_count = 0
+        dropped_tracklet_count = 0
         for item in raw_tracklets:
             modality = str(item["modality"]).lower()
             if modality not in allowed_modalities:
@@ -118,13 +131,18 @@ class VCMTrackletDataset(Dataset):
             frames = item.get("frames") or item.get("frame_paths")
             if not frames:
                 continue
+            frames, missing_count = _filter_existing_frames(root, list(frames))
+            missing_frame_count += missing_count
+            if not frames:
+                dropped_tracklet_count += 1
+                continue
             filtered.append(
                 {
                     "tracklet_id": item.get("tracklet_id", len(filtered)),
                     "pid": int(item["pid"]),
                     "camid": int(item["camid"]),
                     "modality": modality,
-                    "frames": list(frames),
+                    "frames": frames,
                 }
             )
 
@@ -166,7 +184,9 @@ class VCMTrackletDataset(Dataset):
             )
         else:
             self.transform = build_transforms(image_size=image_size, training=True, augment=train_augment)
-        self.metadata = payload.get("metadata", {})
+        self.metadata = dict(payload.get("metadata", {}))
+        self.metadata["missing_frames_filtered"] = missing_frame_count
+        self.metadata["empty_tracklets_dropped"] = dropped_tracklet_count
         self.source_counts = self._count_sources()
 
     def _count_sources(self):
@@ -392,12 +412,19 @@ class SYSUIRVCMIRDataset(Dataset):
         sysu_class_count = len(sysu_pid_to_local_label)
         vcm_payload = _load_tracklet_json(vcm_tracklet_json)
         vcm_raw = []
+        missing_frame_count = 0
+        dropped_tracklet_count = 0
         for item in vcm_payload["tracklets"]:
             modality = str(item["modality"]).lower()
             if modality != "ir":
                 continue
             frames = item.get("frames") or item.get("frame_paths")
             if not frames:
+                continue
+            frames, missing_count = _filter_existing_frames(vcm_root, list(frames))
+            missing_frame_count += missing_count
+            if not frames:
+                dropped_tracklet_count += 1
                 continue
             vcm_raw.append(
                 {
@@ -407,7 +434,7 @@ class SYSUIRVCMIRDataset(Dataset):
                     "pid": int(item["pid"]),
                     "camid": int(item["camid"]),
                     "modality": "ir",
-                    "frames": list(frames),
+                    "frames": frames,
                     "frame_quality": [self._get_vcm_quality_entry(frame_path) for frame_path in frames],
                 }
             )
@@ -433,6 +460,8 @@ class SYSUIRVCMIRDataset(Dataset):
             "sysu_use_val": sysu_use_val,
             "sysu_classes": sysu_class_count,
             "vcm_ir_classes": len(vcm_pids),
+            "vcm_missing_frames_filtered": missing_frame_count,
+            "vcm_empty_tracklets_dropped": dropped_tracklet_count,
         }
         self.source_counts = self._count_sources()
 

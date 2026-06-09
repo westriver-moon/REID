@@ -1,0 +1,3 @@
+[launcher] start \2026-06-08 08:21:00 session=ablation_patch_A gpu=0 config=/home/cgv841/ybj/TVI-LFM/project/sysumm01/configs/ablation_patch/A_vit224_square.yaml pid=$$
+[launcher] start \2026-06-08 08:21:00 session=ablation_patch_B gpu=1 config=/home/cgv841/ybj/TVI-LFM/project/sysumm01/configs/ablation_patch/B_multibranch_288x144.yaml pid=$$
+[launcher] start \2026-06-08 08:21:00 session=ablation_patch_C gpu=2 config=/home/cgv841/ybj/TVI-LFM/project/sysumm01/configs/ablation_patch/C_singlebranch_288x144.yaml pid=$$

@@ -7,7 +7,7 @@ CODEX_PROXY_SCHEME="${CODEX_PROXY_SCHEME:-socks5h}"
 CODEX_PROXY_TIMEOUT="${CODEX_PROXY_TIMEOUT:-2}"
 CODEX_PROXY_TMPDIR="${CODEX_PROXY_TMPDIR:-/home/cgv841/ybj/codex-local/tmp}"
 CODEX_PROXY_NO_PROXY="${CODEX_PROXY_NO_PROXY:-localhost,127.0.0.1,::1}"
-CODEX_IPC_DIR="${CODEX_IPC_DIR:-/tmp/codex-ipc}"
+CODEX_IPC_DIR="${CODEX_IPC_DIR:-/home/cgv841/ybj/codex-local/tmp/codex-ipc}"
 
 codex_proxy_url() {
   printf '%s://%s:%s\n' "${CODEX_PROXY_SCHEME}" "${CODEX_PROXY_HOST}" "${CODEX_PROXY_PORT}"
@@ -24,7 +24,7 @@ codex_proxy_apply() {
   export TMPDIR="${CODEX_PROXY_TMPDIR}"
   export XDG_RUNTIME_DIR="${CODEX_PROXY_TMPDIR}"
   mkdir -p "${CODEX_IPC_DIR}"
-  chmod 1777 "${CODEX_IPC_DIR}" 2>/dev/null || true
+  chmod 700 "${CODEX_IPC_DIR}" 2>/dev/null || true
 
   proxy_url="$(codex_proxy_url)"
 

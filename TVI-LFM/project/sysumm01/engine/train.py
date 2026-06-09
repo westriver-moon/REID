@@ -373,6 +373,91 @@ def compute_part_id_loss(outputs, labels, ce_criterion, loss_config):
     return weight * ce_criterion(flat_logits, flat_labels)
 
 
+def cross_modal_contrast_loss(embeddings, labels, modalities, temperature=0.07):
+    rgb_mask = modalities == 0
+    ir_mask = modalities == 1
+    if not rgb_mask.any() or not ir_mask.any():
+        return embeddings.new_tensor(0.0)
+
+    rgb_features = nn.functional.normalize(embeddings[rgb_mask], dim=1)
+    ir_features = nn.functional.normalize(embeddings[ir_mask], dim=1)
+    rgb_labels = labels[rgb_mask]
+    ir_labels = labels[ir_mask]
+
+    positive = rgb_labels[:, None].eq(ir_labels[None, :])
+    if not positive.any():
+        return embeddings.new_tensor(0.0)
+
+    temperature = max(float(temperature), 1e-6)
+    logits = rgb_features @ ir_features.t() / temperature
+
+    def _multi_positive_nce(scores, pos_mask):
+        valid = pos_mask.any(dim=1)
+        if not valid.any():
+            return scores.new_tensor(0.0)
+        scores = scores[valid]
+        pos_mask = pos_mask[valid]
+        pos_scores = scores.masked_fill(~pos_mask, -torch.finfo(scores.dtype).max)
+        return -(torch.logsumexp(pos_scores, dim=1) - torch.logsumexp(scores, dim=1)).mean()
+
+    return 0.5 * (_multi_positive_nce(logits, positive) + _multi_positive_nce(logits.t(), positive.t()))
+
+
+def cross_modal_proto_align_loss(embeddings, labels, modalities):
+    rgb_mask = modalities == 0
+    ir_mask = modalities == 1
+    rgb_labels = set(labels[rgb_mask].detach().cpu().tolist())
+    ir_labels = set(labels[ir_mask].detach().cpu().tolist())
+    common_labels = sorted(rgb_labels & ir_labels)
+    if not common_labels:
+        return embeddings.new_tensor(0.0)
+
+    normalized = nn.functional.normalize(embeddings, dim=1)
+    losses = []
+    for label in common_labels:
+        label_mask = labels == label
+        rgb_center = normalized[label_mask & rgb_mask].mean(dim=0, keepdim=True)
+        ir_center = normalized[label_mask & ir_mask].mean(dim=0, keepdim=True)
+        rgb_center = nn.functional.normalize(rgb_center, dim=1)
+        ir_center = nn.functional.normalize(ir_center, dim=1)
+        losses.append(1.0 - (rgb_center * ir_center).sum())
+    return torch.stack(losses).mean()
+
+
+def compute_rgb_ir_alignment_losses(outputs, labels, batch, loss_config, epoch):
+    align_config = loss_config.get("rgb_ir_alignment", {})
+    enabled = bool(align_config.get("enabled", False))
+    start_epoch = int(align_config.get("start_epoch", 1) or 1)
+    zero = outputs["global_feat"].new_tensor(0.0)
+    if not enabled or epoch < start_epoch or "modality" not in batch:
+        return zero, zero
+
+    modalities = batch["modality"]
+    if not torch.is_tensor(modalities):
+        modalities = torch.as_tensor(modalities, device=labels.device)
+    else:
+        modalities = modalities.to(labels.device, non_blocking=True)
+
+    clip_weight = float(align_config.get("clip_loss_weight", 0.0) or 0.0)
+    proto_weight = float(align_config.get("proto_loss_weight", 0.0) or 0.0)
+    if clip_weight <= 0.0 and proto_weight <= 0.0:
+        return zero, zero
+
+    embeddings = outputs["embeddings"]
+    clip_loss = zero
+    proto_loss = zero
+    if clip_weight > 0.0:
+        clip_loss = clip_weight * cross_modal_contrast_loss(
+            embeddings,
+            labels,
+            modalities,
+            temperature=align_config.get("temperature", 0.07),
+        )
+    if proto_weight > 0.0:
+        proto_loss = proto_weight * cross_modal_proto_align_loss(embeddings, labels, modalities)
+    return clip_loss, proto_loss
+
+
 def get_final_eval_modes(config):
     primary_mode = config["eval"].get("primary_mode", "all")
     modes = [primary_mode]
@@ -644,6 +729,8 @@ def main():
             "triplet_loss",
             "consistency_loss",
             "part_id_loss",
+            "rgb_ir_clip_loss",
+            "proto_align_loss",
             "all_mAP",
             "all_rank1",
             "epoch_seconds",
@@ -675,6 +762,8 @@ def main():
             triplet_meter = AverageMeter()
             consistency_meter = AverageMeter()
             part_id_meter = AverageMeter()
+            rgb_ir_clip_meter = AverageMeter()
+            proto_align_meter = AverageMeter()
             num_steps = len(train_loader)
 
             print(
@@ -709,7 +798,21 @@ def main():
                     else:
                         consistency_loss = outputs["global_feat"].new_tensor(0.0)
                     part_id_loss = compute_part_id_loss(outputs, labels, ce_criterion, config["loss"])
-                    total_loss = id_loss + tri_loss + consistency_weight * consistency_loss + part_id_loss
+                    rgb_ir_clip_loss, proto_align_loss = compute_rgb_ir_alignment_losses(
+                        outputs,
+                        labels,
+                        batch,
+                        config["loss"],
+                        epoch,
+                    )
+                    total_loss = (
+                        id_loss
+                        + tri_loss
+                        + consistency_weight * consistency_loss
+                        + part_id_loss
+                        + rgb_ir_clip_loss
+                        + proto_align_loss
+                    )
 
                 scaler.scale(total_loss).backward()
                 if config["train"].get("clip_grad_norm", 0.0) > 0:
@@ -724,10 +827,12 @@ def main():
                 triplet_meter.update(tri_loss.item(), batch_size)
                 consistency_meter.update(consistency_loss.item(), batch_size)
                 part_id_meter.update(part_id_loss.item(), batch_size)
+                rgb_ir_clip_meter.update(rgb_ir_clip_loss.item(), batch_size)
+                proto_align_meter.update(proto_align_loss.item(), batch_size)
 
                 if step == 1 or step % max(args.print_freq, 1) == 0 or step == num_steps:
                     print(
-                        "[Epoch {:03d}/{:03d}] step {:04d}/{:04d} lr={:.6g} loss={:.4f} id={:.4f} triplet={:.4f} cons={:.4f} part_id={:.4f}".format(
+                        "[Epoch {:03d}/{:03d}] step {:04d}/{:04d} lr={:.6g} loss={:.4f} id={:.4f} triplet={:.4f} cons={:.4f} part_id={:.4f} rgb_ir_clip={:.4f} proto={:.4f}".format(
                             epoch,
                             config["train"]["epochs"],
                             step,
@@ -738,6 +843,8 @@ def main():
                             triplet_meter.avg,
                             consistency_meter.avg,
                             part_id_meter.avg,
+                            rgb_ir_clip_meter.avg,
+                            proto_align_meter.avg,
                         ),
                         flush=True,
                     )
@@ -755,6 +862,8 @@ def main():
                 "triplet_loss": triplet_meter.avg,
                 "consistency_loss": consistency_meter.avg,
                 "part_id_loss": part_id_meter.avg,
+                "rgb_ir_clip_loss": rgb_ir_clip_meter.avg,
+                "proto_align_loss": proto_align_meter.avg,
                 "all_mAP": metrics["mAP"],
                 "all_rank1": metrics["rank1"],
                 "epoch_seconds": epoch_seconds,
