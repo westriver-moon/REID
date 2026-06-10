@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from project.sysumm01.models.backbones import build_backbone
-from project.sysumm01.models.dual_reid_model import DualEncoderReIDModel
+from project.sysumm01.models.dual_reid_model import DualEncoderReIDModel, FrozenDualViTSharedHead
 
 
 class ReIDModel(nn.Module):
@@ -54,4 +54,6 @@ class ReIDModel(nn.Module):
 def build_reid_model(model_config, num_classes):
     if model_config["type"] == "dual_encoder_align":
         return DualEncoderReIDModel(model_config, num_classes)
+    if model_config["type"] == "frozen_dual_vit_shared_head":
+        return FrozenDualViTSharedHead(model_config, num_classes)
     return ReIDModel(model_config, num_classes)
