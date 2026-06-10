@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import yaml
 from torch.cuda.amp import GradScaler, autocast
 from torch.optim import AdamW
@@ -27,7 +28,7 @@ from project.sysumm01.datasets.sysumm01 import (
 from project.sysumm01.datasets.vcm import SYSUIRVCMIRDataset, SYSUIRVCMIRSampler, collate_sysu_ir_vcm_ir
 from project.sysumm01.engine.evaluator import evaluate_sysu
 from project.sysumm01.losses.triplet import BatchHardTripletLoss
-from project.sysumm01.models.reid_model import ReIDModel
+from project.sysumm01.models.reid_model import build_reid_model
 from project.sysumm01.utils.config import dump_config, dump_json, load_config
 from project.sysumm01.utils.misc import AverageMeter, append_metrics_row, count_parameters, ensure_dir, save_checkpoint, set_seed, strip_prefix_if_present
 
@@ -287,11 +288,40 @@ def initialize_model_weights(model, checkpoint_path, init_config=None):
     return msg
 
 
-def set_backbone_trainable(model, trainable):
+def set_backbone_trainable(model, trainable, last_blocks=None):
+    if hasattr(model, "set_backbones_trainable"):
+        model.set_backbones_trainable(trainable, last_blocks=last_blocks)
+        return
     if not hasattr(model, "backbone"):
         return
     for parameter in model.backbone.parameters():
-        parameter.requires_grad_(trainable)
+        parameter.requires_grad_(False)
+    if not trainable:
+        return
+    if not last_blocks:
+        for parameter in model.backbone.parameters():
+            parameter.requires_grad_(True)
+        return
+    blocks = getattr(getattr(model.backbone, "vit", None), "blocks", None)
+    if blocks is None:
+        for parameter in model.backbone.parameters():
+            parameter.requires_grad_(True)
+        return
+    for block in blocks[-int(last_blocks) :]:
+        for parameter in block.parameters():
+            parameter.requires_grad_(True)
+    for name in ("norm", "fc_norm"):
+        layer = getattr(model.backbone.vit, name, None)
+        if layer is not None:
+            for parameter in layer.parameters():
+                parameter.requires_grad_(True)
+
+
+def set_backbone_eval(model):
+    if hasattr(model, "set_backbones_eval"):
+        model.set_backbones_eval()
+    elif hasattr(model, "backbone"):
+        model.backbone.eval()
 
 
 def tracklet_consistency_loss(embeddings, tracklet_groups):
@@ -422,6 +452,260 @@ def cross_modal_proto_align_loss(embeddings, labels, modalities):
         ir_center = nn.functional.normalize(ir_center, dim=1)
         losses.append(1.0 - (rgb_center * ir_center).sum())
     return torch.stack(losses).mean()
+
+
+def cross_modal_batch_hard_triplet_loss(embeddings, labels, modalities, margin=0.3):
+    rgb_mask = modalities == 0
+    ir_mask = modalities == 1
+    if not rgb_mask.any() or not ir_mask.any():
+        return embeddings.new_tensor(0.0)
+
+    normalized = F.normalize(embeddings, dim=1)
+    rgb_features = normalized[rgb_mask]
+    ir_features = normalized[ir_mask]
+    rgb_labels = labels[rgb_mask]
+    ir_labels = labels[ir_mask]
+    distances = torch.cdist(rgb_features, ir_features, p=2)
+    positive = rgb_labels[:, None].eq(ir_labels[None, :])
+    negative = ~positive
+    if not positive.any() or not negative.any():
+        return embeddings.new_tensor(0.0)
+
+    losses = []
+    rgb_valid = positive.any(dim=1) & negative.any(dim=1)
+    if rgb_valid.any():
+        pos_dist = distances.masked_fill(~positive, float("-inf")).max(dim=1)[0]
+        neg_dist = distances.masked_fill(~negative, float("inf")).min(dim=1)[0]
+        losses.append(F.relu(pos_dist[rgb_valid] - neg_dist[rgb_valid] + margin).mean())
+
+    ir_valid = positive.any(dim=0) & negative.any(dim=0)
+    if ir_valid.any():
+        pos_dist = distances.masked_fill(~positive, float("-inf")).max(dim=0)[0]
+        neg_dist = distances.masked_fill(~negative, float("inf")).min(dim=0)[0]
+        losses.append(F.relu(pos_dist[ir_valid] - neg_dist[ir_valid] + margin).mean())
+
+    if not losses:
+        return embeddings.new_tensor(0.0)
+    return torch.stack(losses).mean()
+
+
+def cross_modal_circle_loss(embeddings, labels, modalities, margin=0.25, gamma=32.0):
+    rgb_mask = modalities == 0
+    ir_mask = modalities == 1
+    if not rgb_mask.any() or not ir_mask.any():
+        return embeddings.new_tensor(0.0)
+
+    normalized = F.normalize(embeddings, dim=1)
+    rgb_features = normalized[rgb_mask]
+    ir_features = normalized[ir_mask]
+    rgb_labels = labels[rgb_mask]
+    ir_labels = labels[ir_mask]
+    sim = rgb_features @ ir_features.t()
+    positive = rgb_labels[:, None].eq(ir_labels[None, :])
+    negative = ~positive
+    if not positive.any() or not negative.any():
+        return embeddings.new_tensor(0.0)
+
+    margin = float(margin)
+    gamma = float(gamma)
+    op = 1.0 + margin
+    on = -margin
+    delta_p = 1.0 - margin
+    delta_n = margin
+
+    def _directional_loss(scores, pos_mask):
+        neg_mask = ~pos_mask
+        valid = pos_mask.any(dim=1) & neg_mask.any(dim=1)
+        if not valid.any():
+            return scores.new_tensor(0.0)
+        scores = scores[valid]
+        pos_mask = pos_mask[valid]
+        neg_mask = ~pos_mask
+        sp = scores.unsqueeze(1)
+        sn = scores.unsqueeze(1)
+        alpha_p = torch.clamp_min(op - sp.detach(), 0.0)
+        alpha_n = torch.clamp_min(sn.detach() - on, 0.0)
+        logit_p = (-gamma * alpha_p * (sp - delta_p)).squeeze(1)
+        logit_n = (gamma * alpha_n * (sn - delta_n)).squeeze(1)
+        logit_p = logit_p.masked_fill(~pos_mask, -torch.finfo(scores.dtype).max)
+        logit_n = logit_n.masked_fill(~neg_mask, -torch.finfo(scores.dtype).max)
+        return F.softplus(torch.logsumexp(logit_p, dim=1) + torch.logsumexp(logit_n, dim=1)).mean()
+
+    return 0.5 * (_directional_loss(sim, positive) + _directional_loss(sim.t(), positive.t()))
+
+
+def cross_modal_distance_stats(embeddings, labels, modalities):
+    rgb_mask = modalities == 0
+    ir_mask = modalities == 1
+    zero = embeddings.new_tensor(0.0)
+    if not rgb_mask.any() or not ir_mask.any():
+        return zero, zero, zero
+
+    normalized = F.normalize(embeddings.detach(), dim=1)
+    rgb_features = normalized[rgb_mask]
+    ir_features = normalized[ir_mask]
+    rgb_labels = labels[rgb_mask]
+    ir_labels = labels[ir_mask]
+    distances = torch.cdist(rgb_features, ir_features, p=2)
+    positive = rgb_labels[:, None].eq(ir_labels[None, :])
+    negative = ~positive
+    if not positive.any() or not negative.any():
+        return zero, zero, zero
+    pos_dist = distances[positive].mean()
+    neg_dist = distances[negative].mean()
+    return pos_dist, neg_dist, neg_dist - pos_dist
+
+
+class CrossModalPrototypeMemory:
+    def __init__(self, num_classes, feature_dim, momentum=0.9):
+        self.num_classes = int(num_classes)
+        self.feature_dim = int(feature_dim)
+        self.momentum = float(momentum)
+        self.rgb_memory = None
+        self.ir_memory = None
+        self.rgb_valid = None
+        self.ir_valid = None
+
+    def to(self, device, dtype=torch.float32):
+        if self.rgb_memory is None:
+            self.rgb_memory = torch.zeros(self.num_classes, self.feature_dim, device=device, dtype=dtype)
+            self.ir_memory = torch.zeros(self.num_classes, self.feature_dim, device=device, dtype=dtype)
+            self.rgb_valid = torch.zeros(self.num_classes, device=device, dtype=torch.bool)
+            self.ir_valid = torch.zeros(self.num_classes, device=device, dtype=torch.bool)
+        else:
+            self.rgb_memory = self.rgb_memory.to(device=device, dtype=dtype)
+            self.ir_memory = self.ir_memory.to(device=device, dtype=dtype)
+            self.rgb_valid = self.rgb_valid.to(device=device)
+            self.ir_valid = self.ir_valid.to(device=device)
+        return self
+
+    def state_dict(self):
+        if self.rgb_memory is None:
+            return {}
+        return {
+            "rgb_memory": self.rgb_memory,
+            "ir_memory": self.ir_memory,
+            "rgb_valid": self.rgb_valid,
+            "ir_valid": self.ir_valid,
+        }
+
+    def load_state_dict(self, state_dict):
+        if not state_dict:
+            return
+        self.rgb_memory = state_dict["rgb_memory"]
+        self.ir_memory = state_dict["ir_memory"]
+        self.rgb_valid = state_dict["rgb_valid"]
+        self.ir_valid = state_dict["ir_valid"]
+
+    def _batch_centers(self, embeddings, labels, mask):
+        centers = {}
+        if not mask.any():
+            return centers
+        selected_labels = labels[mask].detach()
+        selected_embeddings = embeddings[mask]
+        for label in selected_labels.unique(sorted=True).tolist():
+            label_mask = selected_labels == label
+            center = selected_embeddings[label_mask].mean(dim=0)
+            centers[int(label)] = F.normalize(center.float(), dim=0)
+        return centers
+
+    def loss_and_update(self, embeddings, labels, modalities):
+        self.to(embeddings.device, dtype=torch.float32)
+        normalized = F.normalize(embeddings.float(), dim=1)
+        rgb_centers = self._batch_centers(normalized, labels, modalities == 0)
+        ir_centers = self._batch_centers(normalized, labels, modalities == 1)
+
+        losses = []
+        for label, center in rgb_centers.items():
+            if self.ir_valid[label]:
+                losses.append(1.0 - (center * self.ir_memory[label].detach().clone()).sum())
+        for label, center in ir_centers.items():
+            if self.rgb_valid[label]:
+                losses.append(1.0 - (center * self.rgb_memory[label].detach().clone()).sum())
+
+        common_labels = sorted(set(rgb_centers.keys()) & set(ir_centers.keys()))
+        for label in common_labels:
+            losses.append(1.0 - (rgb_centers[label] * ir_centers[label]).sum())
+
+        with torch.no_grad():
+            for label, center in rgb_centers.items():
+                if self.rgb_valid[label]:
+                    self.rgb_memory[label].mul_(self.momentum).add_(center.detach(), alpha=1.0 - self.momentum)
+                    self.rgb_memory[label] = F.normalize(self.rgb_memory[label], dim=0)
+                else:
+                    self.rgb_memory[label].copy_(center.detach())
+                    self.rgb_valid[label] = True
+            for label, center in ir_centers.items():
+                if self.ir_valid[label]:
+                    self.ir_memory[label].mul_(self.momentum).add_(center.detach(), alpha=1.0 - self.momentum)
+                    self.ir_memory[label] = F.normalize(self.ir_memory[label], dim=0)
+                else:
+                    self.ir_memory[label].copy_(center.detach())
+                    self.ir_valid[label] = True
+
+        if not losses:
+            return embeddings.new_tensor(0.0)
+        return torch.stack(losses).mean().to(dtype=embeddings.dtype)
+
+
+def compute_strong_cross_modal_losses(outputs, labels, batch, loss_config, epoch, proto_memory=None):
+    strong_config = loss_config.get("cross_modal_metric", {})
+    enabled = bool(strong_config.get("enabled", False))
+    start_epoch = int(strong_config.get("start_epoch", 1) or 1)
+    zero = outputs["global_feat"].new_tensor(0.0)
+    if not enabled or epoch < start_epoch or "modality" not in batch:
+        return zero, zero, zero, zero, zero, zero
+
+    modalities = batch["modality"]
+    if not torch.is_tensor(modalities):
+        modalities = torch.as_tensor(modalities, device=labels.device)
+    else:
+        modalities = modalities.to(labels.device, non_blocking=True)
+
+    embeddings = outputs["embeddings"]
+    cm_contrast = zero
+    cm_triplet = zero
+    memory_proto = zero
+    cm_circle = zero
+
+    contrast_config = strong_config.get("contrast", {})
+    if bool(contrast_config.get("enabled", False)):
+        cm_contrast = float(contrast_config.get("weight", 0.0) or 0.0) * cross_modal_contrast_loss(
+            embeddings,
+            labels,
+            modalities,
+            temperature=contrast_config.get("temperature", strong_config.get("temperature", 0.07)),
+        )
+
+    triplet_config = strong_config.get("triplet", {})
+    if bool(triplet_config.get("enabled", False)):
+        cm_triplet = float(triplet_config.get("weight", 0.0) or 0.0) * cross_modal_batch_hard_triplet_loss(
+            embeddings,
+            labels,
+            modalities,
+            margin=triplet_config.get("margin", loss_config.get("triplet_margin", 0.3)),
+        )
+
+    circle_config = strong_config.get("circle_loss", strong_config.get("cross_modal_circle_loss", {}))
+    if bool(circle_config.get("enabled", False)):
+        cm_circle = float(circle_config.get("weight", 0.0) or 0.0) * cross_modal_circle_loss(
+            embeddings,
+            labels,
+            modalities,
+            margin=circle_config.get("margin", 0.25),
+            gamma=circle_config.get("gamma", 32.0),
+        )
+
+    memory_config = strong_config.get("prototype_memory", {})
+    if proto_memory is not None and bool(memory_config.get("enabled", False)):
+        memory_proto = float(memory_config.get("weight", 0.0) or 0.0) * proto_memory.loss_and_update(
+            embeddings,
+            labels,
+            modalities,
+        )
+
+    pos_dist, neg_dist, gap = cross_modal_distance_stats(embeddings, labels, modalities)
+    return cm_contrast, cm_triplet + cm_circle, memory_proto, pos_dist, neg_dist, gap
 
 
 def compute_rgb_ir_alignment_losses(outputs, labels, batch, loss_config, epoch):
@@ -617,6 +901,8 @@ def main():
                 num_instances=config["train"]["num_instances"],
                 num_batches=config["train"]["steps_per_epoch"],
                 seed=config["seed"],
+                rgb_instances=config["train"].get("rgb_instances"),
+                ir_instances=config["train"].get("ir_instances"),
             )
         else:
             if config["train"].get("full_coverage_priority", True):
@@ -645,10 +931,18 @@ def main():
             collate_fn=collate_sysu_ir_vcm_ir if dataset_name == "sysu_ir_vcm_ir" else None,
         )
 
-        model = ReIDModel(model_config=config["model"], num_classes=train_dataset.num_classes)
+        model = build_reid_model(model_config=config["model"], num_classes=train_dataset.num_classes)
         model.to(device)
+        proto_memory = None
+        memory_config = config["loss"].get("cross_modal_metric", {}).get("prototype_memory", {})
+        if bool(memory_config.get("enabled", False)):
+            proto_memory = CrossModalPrototypeMemory(
+                num_classes=train_dataset.num_classes,
+                feature_dim=getattr(model, "feature_dim", 768),
+                momentum=memory_config.get("momentum", 0.9),
+            ).to(device)
         init_checkpoint = config["train"].get("init_checkpoint")
-        if init_checkpoint and not args.resume:
+        if init_checkpoint and not args.resume and config["model"].get("type") != "dual_encoder_align":
             init_msg = initialize_model_weights(model, init_checkpoint, init_config=config["train"])
             print(
                 "Initialized model from {} (missing={}, unexpected={})".format(
@@ -691,6 +985,9 @@ def main():
             optimizer.load_state_dict(checkpoint["optimizer"])
             scheduler.load_state_dict(checkpoint["scheduler"])
             scaler.load_state_dict(checkpoint["scaler"])
+            if proto_memory is not None and "proto_memory" in checkpoint:
+                proto_memory.load_state_dict(checkpoint["proto_memory"])
+                proto_memory.to(device)
             start_epoch = checkpoint["epoch"] + 1
             best_map = checkpoint.get("best_map", -1.0)
 
@@ -731,6 +1028,12 @@ def main():
             "part_id_loss",
             "rgb_ir_clip_loss",
             "proto_align_loss",
+            "cm_contrast_loss",
+            "cm_triplet_loss",
+            "memory_proto_loss",
+            "cm_pos_dist",
+            "cm_neg_dist",
+            "cm_dist_gap",
             "all_mAP",
             "all_rank1",
             "epoch_seconds",
@@ -743,9 +1046,10 @@ def main():
             model.train()
             freeze_backbone_epochs = int(config["train"].get("freeze_backbone_epochs", 0) or 0)
             freeze_backbone = epoch <= freeze_backbone_epochs
-            set_backbone_trainable(model, not freeze_backbone)
-            if freeze_backbone and hasattr(model, "backbone"):
-                model.backbone.eval()
+            last_blocks = config["train"].get("unfreeze_last_blocks")
+            set_backbone_trainable(model, not freeze_backbone, last_blocks=last_blocks)
+            if freeze_backbone:
+                set_backbone_eval(model)
             if freeze_backbone_epochs > 0 and (epoch == 1 or epoch == freeze_backbone_epochs + 1):
                 print(
                     "[Epoch {:03d}] backbone {}".format(
@@ -764,6 +1068,12 @@ def main():
             part_id_meter = AverageMeter()
             rgb_ir_clip_meter = AverageMeter()
             proto_align_meter = AverageMeter()
+            cm_contrast_meter = AverageMeter()
+            cm_triplet_meter = AverageMeter()
+            memory_proto_meter = AverageMeter()
+            cm_pos_dist_meter = AverageMeter()
+            cm_neg_dist_meter = AverageMeter()
+            cm_gap_meter = AverageMeter()
             num_steps = len(train_loader)
 
             print(
@@ -780,10 +1090,13 @@ def main():
                 tracklet_groups = batch.get("tracklet_group")
                 if tracklet_groups is not None:
                     tracklet_groups = tracklet_groups.to(device, non_blocking=True)
+                modalities = batch.get("modality")
+                if modalities is not None:
+                    modalities = modalities.to(device, non_blocking=True)
                 optimizer.zero_grad()
 
                 with autocast(enabled=scaler.is_enabled()):
-                    outputs = model(images, part_masks=part_masks)
+                    outputs = model(images, part_masks=part_masks, modality=modalities)
                     id_loss, tri_loss = compute_reid_losses(
                         outputs,
                         labels,
@@ -805,6 +1118,21 @@ def main():
                         config["loss"],
                         epoch,
                     )
+                    (
+                        cm_contrast_loss,
+                        cm_triplet_loss,
+                        memory_proto_loss,
+                        cm_pos_dist,
+                        cm_neg_dist,
+                        cm_dist_gap,
+                    ) = compute_strong_cross_modal_losses(
+                        outputs,
+                        labels,
+                        batch,
+                        config["loss"],
+                        epoch,
+                        proto_memory=proto_memory,
+                    )
                     total_loss = (
                         id_loss
                         + tri_loss
@@ -812,6 +1140,9 @@ def main():
                         + part_id_loss
                         + rgb_ir_clip_loss
                         + proto_align_loss
+                        + cm_contrast_loss
+                        + cm_triplet_loss
+                        + memory_proto_loss
                     )
 
                 scaler.scale(total_loss).backward()
@@ -829,10 +1160,16 @@ def main():
                 part_id_meter.update(part_id_loss.item(), batch_size)
                 rgb_ir_clip_meter.update(rgb_ir_clip_loss.item(), batch_size)
                 proto_align_meter.update(proto_align_loss.item(), batch_size)
+                cm_contrast_meter.update(cm_contrast_loss.item(), batch_size)
+                cm_triplet_meter.update(cm_triplet_loss.item(), batch_size)
+                memory_proto_meter.update(memory_proto_loss.item(), batch_size)
+                cm_pos_dist_meter.update(cm_pos_dist.item(), batch_size)
+                cm_neg_dist_meter.update(cm_neg_dist.item(), batch_size)
+                cm_gap_meter.update(cm_dist_gap.item(), batch_size)
 
                 if step == 1 or step % max(args.print_freq, 1) == 0 or step == num_steps:
                     print(
-                        "[Epoch {:03d}/{:03d}] step {:04d}/{:04d} lr={:.6g} loss={:.4f} id={:.4f} triplet={:.4f} cons={:.4f} part_id={:.4f} rgb_ir_clip={:.4f} proto={:.4f}".format(
+                        "[Epoch {:03d}/{:03d}] step {:04d}/{:04d} lr={:.6g} loss={:.4f} id={:.4f} triplet={:.4f} cons={:.4f} part_id={:.4f} rgb_ir_clip={:.4f} proto={:.4f} cm_contrast={:.4f} cm_triplet={:.4f} mem_proto={:.4f} cm_gap={:.4f}".format(
                             epoch,
                             config["train"]["epochs"],
                             step,
@@ -845,6 +1182,10 @@ def main():
                             part_id_meter.avg,
                             rgb_ir_clip_meter.avg,
                             proto_align_meter.avg,
+                            cm_contrast_meter.avg,
+                            cm_triplet_meter.avg,
+                            memory_proto_meter.avg,
+                            cm_gap_meter.avg,
                         ),
                         flush=True,
                     )
@@ -864,6 +1205,12 @@ def main():
                 "part_id_loss": part_id_meter.avg,
                 "rgb_ir_clip_loss": rgb_ir_clip_meter.avg,
                 "proto_align_loss": proto_align_meter.avg,
+                "cm_contrast_loss": cm_contrast_meter.avg,
+                "cm_triplet_loss": cm_triplet_meter.avg,
+                "memory_proto_loss": memory_proto_meter.avg,
+                "cm_pos_dist": cm_pos_dist_meter.avg,
+                "cm_neg_dist": cm_neg_dist_meter.avg,
+                "cm_dist_gap": cm_gap_meter.avg,
                 "all_mAP": metrics["mAP"],
                 "all_rank1": metrics["rank1"],
                 "epoch_seconds": epoch_seconds,
@@ -880,6 +1227,8 @@ def main():
                 "best_map": best_map,
                 "config": config,
             }
+            if proto_memory is not None:
+                state["proto_memory"] = proto_memory.state_dict()
             save_checkpoint(state, os.path.join(output_dir, "checkpoints", "last.pth"))
             top_records = update_topk_checkpoints(top_records, state, metrics, output_dir, save_top_k)
 

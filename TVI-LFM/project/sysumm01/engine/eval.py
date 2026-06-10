@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from project.sysumm01.engine.evaluator import evaluate_sysu
-from project.sysumm01.models.reid_model import ReIDModel
+from project.sysumm01.models.reid_model import build_reid_model
 from project.sysumm01.utils.config import dump_json, load_config
 
 
@@ -30,7 +30,7 @@ def main():
     config["model"]["image_size"] = list(config["dataset"]["image_size"])
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
-    model = ReIDModel(config["model"], num_classes=config["dataset"]["num_classes"])
+    model = build_reid_model(config["model"], num_classes=config["dataset"]["num_classes"])
     checkpoint = torch.load(args.checkpoint, map_location="cpu")
     state_dict = checkpoint["model"] if "model" in checkpoint else checkpoint
     model.load_state_dict(state_dict, strict=True)

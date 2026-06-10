@@ -386,6 +386,7 @@ class SYSUEvalDataset(Dataset):
             "image": tensor,
             "pid": record["pid"],
             "camid": record["camid"],
+            "modality": 0 if record["modality"] == "rgb" else 1,
             "path": record["path"],
         }
         if part_mask_tensor is not None:
@@ -394,10 +395,12 @@ class SYSUEvalDataset(Dataset):
 
 
 class CrossModalBatchSampler(BatchSampler):
-    def __init__(self, dataset, num_ids, num_instances, num_batches, seed=42):
+    def __init__(self, dataset, num_ids, num_instances, num_batches, seed=42, rgb_instances=None, ir_instances=None):
         self.dataset = dataset
         self.num_ids = num_ids
         self.num_instances = num_instances
+        self.rgb_instances = int(rgb_instances if rgb_instances is not None else num_instances)
+        self.ir_instances = int(ir_instances if ir_instances is not None else num_instances)
         self.num_batches = num_batches
         self.seed = seed
         self.epoch = 0
@@ -418,8 +421,8 @@ class CrossModalBatchSampler(BatchSampler):
             chosen_ids = rng.sample(self.dataset.valid_labels, self.num_ids)
             batch = []
             for label in chosen_ids:
-                batch.extend(self._sample(self.dataset.rgb_by_pid[label], self.num_instances, rng))
-                batch.extend(self._sample(self.dataset.ir_by_pid[label], self.num_instances, rng))
+                batch.extend(self._sample(self.dataset.rgb_by_pid[label], self.rgb_instances, rng))
+                batch.extend(self._sample(self.dataset.ir_by_pid[label], self.ir_instances, rng))
             rng.shuffle(batch)
             yield batch
 

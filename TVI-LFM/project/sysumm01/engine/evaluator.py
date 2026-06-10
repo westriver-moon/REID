@@ -100,7 +100,10 @@ def _extract_embeddings(
             part_masks = batch.get("part_masks")
             if part_masks is not None:
                 part_masks = part_masks.to(device, non_blocking=True)
-            embeddings = model.extract_features(images, part_masks=part_masks)
+            modalities = batch.get("modality")
+            if modalities is not None:
+                modalities = modalities.to(device, non_blocking=True)
+            embeddings = model.extract_features(images, part_masks=part_masks, modality=modalities)
             features.append(embeddings.cpu().numpy())
             pids.append(batch["pid"].numpy())
             camids.append(batch["camid"].numpy())

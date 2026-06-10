@@ -1,0 +1,93 @@
+seed: 42
+
+dataset:
+  name: sysumm01
+  root: /home/cgv841/datasets/SYSU-MM01
+  image_size: [288, 144]
+  use_val: true
+  train_modality: both
+  train_augment: strong_reid
+
+model:
+  type: dual_encoder_align
+  rgb_init_checkpoint: /home/cgv841/ybj/TVI-LFM/logs/mixed_msmt17_sysumm01/rgb_lastvit_ep40/checkpoints/best.pth
+  ir_init_checkpoint: /home/cgv841/ybj/TVI-LFM/logs/sysu_ir_vcm_ir/schp_full_s2_steps800_ep40/checkpoints/best.pth
+  adapter:
+    enabled: true
+    hidden_dim: 384
+    dropout: 0.0
+  rgb_model:
+    type: patch_mean
+    backbone_name: vit_base_patch16_224
+    pretrained_path: /home/cgv841/ybj/pretrained/ViT_190k.pth
+    drop_path_rate: 0.1
+    image_size: [288, 144]
+    patch_embed:
+      anchor_branch: 0
+      branches:
+        - patch_size: [16, 16]
+          stride: [12, 12]
+        - patch_size: [16, 8]
+          stride: [12, 6]
+  ir_model:
+    type: patch_mean
+    backbone_name: vit_base_patch16_224
+    pretrained_path: /home/cgv841/ybj/pretrained/ViT_190k.pth
+    drop_path_rate: 0.1
+    image_size: [288, 144]
+    patch_embed:
+      anchor_branch: 0
+      branches:
+        - patch_size: [16, 16]
+          stride: [12, 12]
+        - patch_size: [16, 8]
+          stride: [12, 6]
+
+loss:
+  id_weight: 1.0
+  triplet_weight: 0.5
+  triplet_margin: 0.3
+  cross_batch_memory_size: 0
+  reset_memory_each_epoch: true
+  cross_modal_metric:
+    enabled: true
+    start_epoch: 1
+    contrast:
+      enabled: true
+      weight: 0.5
+      temperature: 0.07
+    triplet:
+      enabled: true
+      weight: 0.5
+      margin: 0.3
+    prototype_memory:
+      enabled: true
+      weight: 0.1
+      momentum: 0.9
+
+train:
+  epochs: 20
+  steps_per_epoch: 400
+  num_ids: 8
+  num_instances: 2
+  num_workers: 8
+  freeze_backbone_epochs: 20
+  lr: 0.00005
+  min_lr: 0.000001
+  scheduler: warmup_cosine
+  warmup_epochs: 2
+  warmup_init_lr: 0.000001
+  weight_decay: 0.05
+  amp: true
+  clip_grad_norm: 1.0
+  eval_trials: 2
+  output_dir: /home/cgv841/ybj/TVI-LFM/logs/sysu_rgb_ir_dual/dual_adapter_h3_allmetric_memory_ep20
+
+eval:
+  dataset_root: /home/cgv841/datasets/SYSU-MM01
+  batch_size: 128
+  num_workers: 8
+  num_trials: 10
+  primary_mode: all
+  extra_modes: [indoor]
+  protocol: cross_modality
