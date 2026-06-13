@@ -235,7 +235,7 @@ class PairedImagePartTransform:
         self.std = std
         self.schp_aug_config = dict(schp_aug_config or {})
         self.schp_aug_enabled = bool(self.schp_aug_config.get("enabled", False))
-        self.random_erasing = T.RandomErasing(p=0.5, value=mean) if training and augment == "strong_reid" else None
+        self.random_erasing = T.RandomErasing(p=0.5, value=0) if training and augment == "strong_reid" else None
         if augment not in ("basic", "strong_reid"):
             raise ValueError("Unsupported training augment: {}".format(augment))
 

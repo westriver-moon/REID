@@ -196,9 +196,12 @@ def evaluate_and_save(model, config, output_dir, device, epoch, num_trials):
     primary_mode = config["eval"].get("primary_mode", "all")
     protocol = config["eval"].get("protocol", "cross_modality")
     modality = config["eval"].get("modality")
+    selection_split = config["eval"].get("selection_split", "val")
+    selection_seed = config["eval"].get("selection_seed", config["seed"])
     print(
-        "[Epoch {:03d}] evaluating on SYSU-MM01 (mode={}, protocol={}, modality={}, trials={})".format(
+        "[Epoch {:03d}] evaluating on SYSU-MM01 (split={}, mode={}, protocol={}, modality={}, trials={})".format(
             epoch,
+            selection_split,
             primary_mode,
             protocol,
             modality or "cross",
@@ -215,9 +218,10 @@ def evaluate_and_save(model, config, output_dir, device, epoch, num_trials):
         device=device,
         mode=primary_mode,
         num_trials=num_trials,
-        seed=config["seed"] + epoch,
+        seed=selection_seed,
         protocol=protocol,
         modality=modality,
+        id_split=selection_split,
         **get_schp_eval_kwargs(config),
     )
     payload = {"metrics": all_metrics, "retrieval_examples": all_retrievals, "epoch": epoch}
@@ -231,6 +235,24 @@ def evaluate_and_save(model, config, output_dir, device, epoch, num_trials):
         flush=True,
     )
     return all_metrics
+
+
+def guard_sysu_validation_leakage(config):
+    if config.get("train", {}).get("allow_validation_ids_in_training", False):
+        return []
+    if config.get("eval", {}).get("selection_split", "val") != "val":
+        return []
+
+    dataset_config = config.get("dataset", {})
+    dataset_name = dataset_config.get("name", "sysumm01")
+    changes = []
+    if dataset_name == "sysumm01" and dataset_config.get("use_val", True):
+        dataset_config["use_val"] = False
+        changes.append("dataset.use_val=false")
+    if dataset_name in ("sysu_ir_vcm_ir", "mixed_rgb") and dataset_config.get("sysu_use_val", True):
+        dataset_config["sysu_use_val"] = False
+        changes.append("dataset.sysu_use_val=false")
+    return changes
 
 
 def _extract_model_state_dict(checkpoint):
@@ -825,6 +847,7 @@ def evaluate_topk_checkpoints(model, config, output_dir, device, top_records):
                 seed=config["seed"],
                 protocol=config["eval"].get("protocol", "cross_modality"),
                 modality=config["eval"].get("modality"),
+                id_split=config["eval"].get("final_split", "test"),
                 **get_schp_eval_kwargs(config),
             )
             epoch_payload["metrics"][eval_mode] = metrics
@@ -860,6 +883,14 @@ def main():
 
         set_seed(config["seed"])
         device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+        leakage_changes = guard_sysu_validation_leakage(config)
+        if leakage_changes:
+            print(
+                "Validation selection uses SYSU val_id; preventing validation leakage by setting {}.".format(
+                    ", ".join(leakage_changes)
+                ),
+                flush=True,
+            )
 
         dataset_name = config["dataset"].get("name", "sysumm01")
         if dataset_name == "mixed_rgb":
@@ -1038,6 +1069,8 @@ def main():
                 proto_memory.to(device)
             start_epoch = checkpoint["epoch"] + 1
             best_map = checkpoint.get("best_map", -1.0)
+        if hasattr(batch_sampler, "epoch"):
+            batch_sampler.epoch = max(int(start_epoch) - 1, 0)
 
         if args.eval_only:
             ckpt_path = args.checkpoint or args.resume
@@ -1055,10 +1088,11 @@ def main():
                     device=device,
                     mode=eval_mode,
                     num_trials=config["eval"]["num_trials"],
-                        seed=config["seed"],
-                        protocol=config["eval"].get("protocol", "cross_modality"),
-                        modality=config["eval"].get("modality"),
-                        **get_schp_eval_kwargs(config),
+                    seed=config["seed"],
+                    protocol=config["eval"].get("protocol", "cross_modality"),
+                    modality=config["eval"].get("modality"),
+                    id_split=config["eval"].get("id_split", config["eval"].get("final_split", "test")),
+                    **get_schp_eval_kwargs(config),
                     )
                 dump_json(
                     {"metrics": metrics, "retrieval_examples": retrievals},
@@ -1282,6 +1316,10 @@ def main():
             append_metrics_row(os.path.join(output_dir, "history.csv"), fieldnames, row)
             print("[Epoch {:03d}/{:03d}] summary {}".format(epoch, config["train"]["epochs"], row), flush=True)
 
+            is_best = metrics["mAP"] > best_map
+            if is_best:
+                best_map = metrics["mAP"]
+
             state = {
                 "epoch": epoch,
                 "model": model.state_dict(),
@@ -1296,9 +1334,7 @@ def main():
             save_checkpoint(state, os.path.join(output_dir, "checkpoints", "last.pth"))
             top_records = update_topk_checkpoints(top_records, state, metrics, output_dir, save_top_k)
 
-            if metrics["mAP"] > best_map:
-                best_map = metrics["mAP"]
-                state["best_map"] = best_map
+            if is_best:
                 save_checkpoint(state, os.path.join(output_dir, "checkpoints", "best.pth"))
 
         best_checkpoint = os.path.join(output_dir, "checkpoints", "best.pth")
@@ -1317,6 +1353,7 @@ def main():
                 seed=config["seed"],
                 protocol=config["eval"].get("protocol", "cross_modality"),
                 modality=config["eval"].get("modality"),
+                id_split=config["eval"].get("final_split", "test"),
                 **get_schp_eval_kwargs(config),
             )
             dump_json(

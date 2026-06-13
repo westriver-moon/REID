@@ -152,6 +152,7 @@ def evaluate_sysu(
     seed=42,
     protocol="cross_modality",
     modality=None,
+    id_split="test",
     schp_mask_root=None,
     schp_min_part_pixels=4,
     schp_allow_fallback=True,
@@ -162,6 +163,7 @@ def evaluate_sysu(
         mode=mode,
         protocol=protocol,
         modality=modality,
+        split=id_split,
     )
     query_cache = _extract_embeddings(
         model,
@@ -248,4 +250,5 @@ def evaluate_sysu(
     metrics["mode"] = mode
     metrics["protocol"] = protocol
     metrics["modality"] = modality or "cross"
+    metrics["id_split"] = id_split
     return metrics, retrieval_examples

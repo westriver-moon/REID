@@ -508,14 +508,41 @@ class PartialSharedDualStreamReIDModel(nn.Module):
                 parameter.requires_grad_(True)
 
     def set_backbones_trainable(self, trainable, last_blocks=None):
-        self._set_branch_trainable(self.rgb_backbone, trainable, last_blocks=last_blocks)
-        self._set_branch_trainable(self.ir_backbone, trainable, last_blocks=last_blocks)
         for parameter in self.shared_blocks.parameters():
-            parameter.requires_grad_(bool(trainable))
-        if bool(trainable):
+            parameter.requires_grad_(False)
+        for layer in (self.shared_norm, self.shared_fc_norm):
+            for parameter in layer.parameters():
+                parameter.requires_grad_(False)
+
+        if not trainable:
+            self._set_branch_trainable(self.rgb_backbone, False, last_blocks=last_blocks)
+            self._set_branch_trainable(self.ir_backbone, False, last_blocks=last_blocks)
+            return
+
+        if not last_blocks:
+            self._set_branch_trainable(self.rgb_backbone, True, last_blocks=None)
+            self._set_branch_trainable(self.ir_backbone, True, last_blocks=None)
+            for parameter in self.shared_blocks.parameters():
+                parameter.requires_grad_(True)
             for layer in (self.shared_norm, self.shared_fc_norm):
                 for parameter in layer.parameters():
                     parameter.requires_grad_(True)
+            return
+
+        last_blocks = int(last_blocks)
+        shared_count = len(self.shared_blocks)
+        shared_to_train = min(last_blocks, shared_count)
+        if shared_to_train > 0:
+            for block in self.shared_blocks[-shared_to_train:]:
+                for parameter in block.parameters():
+                    parameter.requires_grad_(True)
+            for layer in (self.shared_norm, self.shared_fc_norm):
+                for parameter in layer.parameters():
+                    parameter.requires_grad_(True)
+
+        branch_last_blocks = max(last_blocks - shared_count, 0)
+        self._set_branch_trainable(self.rgb_backbone, branch_last_blocks > 0, last_blocks=branch_last_blocks)
+        self._set_branch_trainable(self.ir_backbone, branch_last_blocks > 0, last_blocks=branch_last_blocks)
 
     def set_backbones_eval(self):
         self.rgb_backbone.eval()

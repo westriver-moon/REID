@@ -266,8 +266,21 @@ class MixedRGBTrainDataset(Dataset):
         }
 
 
-def build_test_records(root, mode="all", protocol="cross_modality", modality=None):
-    test_ids = read_id_file(os.path.join(root, "exp", "test_id.txt"))
+def read_split_ids(root, split="test"):
+    split = str(split or "test")
+    if os.path.isabs(split) or split.endswith(".txt"):
+        return read_id_file(split if os.path.isabs(split) else os.path.join(root, "exp", split))
+    if split in ("trainval", "train_val"):
+        return read_id_file(os.path.join(root, "exp", "train_id.txt")) + read_id_file(
+            os.path.join(root, "exp", "val_id.txt")
+        )
+    if split not in ("train", "val", "test"):
+        raise ValueError("Unsupported SYSU id split: {}".format(split))
+    return read_id_file(os.path.join(root, "exp", "{}_id.txt".format(split)))
+
+
+def build_test_records(root, mode="all", protocol="cross_modality", modality=None, split="test"):
+    test_ids = read_split_ids(root, split=split)
     query_cameras, gallery_cameras = get_eval_camera_ids(protocol=protocol, modality=modality, mode=mode)
     query_records = list_images_for_ids(root, query_cameras, test_ids)
     gallery_records = list_images_for_ids(root, gallery_cameras, test_ids)
@@ -292,7 +305,7 @@ def build_transforms(image_size, training, augment="basic"):
             raise ValueError("Unsupported training augment: {}".format(augment))
     ops.extend([T.ToTensor(), T.Normalize(IMAGENET_MEAN, IMAGENET_STD)])
     if training and augment == "strong_reid":
-        ops.append(T.RandomErasing(p=0.5, value=IMAGENET_MEAN))
+        ops.append(T.RandomErasing(p=0.5, value=0))
     return T.Compose(ops)
 
 

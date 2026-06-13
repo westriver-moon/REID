@@ -258,8 +258,9 @@ class ExternalRGBIRSampler(BatchSampler):
         return [rng.choice(indices) for _ in range(count)]
 
     def _ids_per_source(self):
+        default_ratio = 1.0 / len(self.source_names) if not self.source_sampling else 0.0
         ratios = {
-            source: float(self.source_sampling.get("{}_ratio".format(source), 1.0 / len(self.source_names)))
+            source: float(self.source_sampling.get("{}_ratio".format(source), default_ratio))
             for source in self.source_names
         }
         total = sum(max(value, 0.0) for value in ratios.values())
@@ -301,7 +302,7 @@ class ExternalRGBIRSampler(BatchSampler):
                     continue
                 candidates = [
                     label for label in self.dataset.ir_labels_by_source.get(source, [])
-                    if self.dataset.ir_by_pid.get(label)
+                    if self.dataset.ir_by_pid.get(label) and label not in labels
                 ]
                 if not candidates:
                     continue

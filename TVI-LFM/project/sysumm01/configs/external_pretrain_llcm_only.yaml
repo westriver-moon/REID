@@ -81,7 +81,9 @@ eval:
   dataset_root: /home/cgv841/datasets/SYSU-MM01
   batch_size: 128
   num_workers: 8
-  num_trials: 1
+  num_trials: 10
+  selection_split: val
+  final_split: test
   primary_mode: all
   extra_modes: [indoor]
   protocol: cross_modality

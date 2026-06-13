@@ -4,7 +4,7 @@ dataset:
   name: sysumm01
   root: /home/cgv841/datasets/SYSU-MM01
   image_size: [288, 144]
-  use_val: true
+  use_val: false
   train_modality: both
   train_augment: strong_reid
 
@@ -25,13 +25,17 @@ model:
 
 loss:
   id_weight: 1.0
-  triplet_weight: 0.0
+  triplet_weight: 0.5
   triplet_margin: 0.3
   cross_batch_memory_size: 0
   reset_memory_each_epoch: true
   cross_modal_metric:
     enabled: true
     start_epoch: 1
+    contrast:
+      enabled: true
+      weight: 0.1
+      temperature: 0.07
     triplet:
       enabled: true
       weight: 1.0
@@ -40,30 +44,33 @@ loss:
 train:
   init_checkpoint: /home/cgv841/ybj/TVI-LFM/logs/vcm_rgb_ir_tracklet/partial_shared_k2_ep40/checkpoints/vcm_rgb_ir_tracklet_last.pth
   init_partial_classifier: false
-  epochs: 20
+  epochs: 30
   steps_per_epoch: 400
   num_ids: 6
   num_instances: 4
   rgb_instances: 4
   ir_instances: 4
   num_workers: 8
-  freeze_backbone_epochs: 0
-  lr: 0.00001
-  min_lr: 0.000001
+  freeze_backbone_epochs: 3
+  unfreeze_last_blocks: 2
+  lr: 0.00005
+  min_lr: 0.000002
   scheduler: warmup_cosine
-  warmup_epochs: 2
-  warmup_init_lr: 0.000001
+  warmup_epochs: 3
+  warmup_init_lr: 0.000005
   weight_decay: 0.0005
   amp: true
   clip_grad_norm: 1.0
-  eval_trials: 2
-  output_dir: /home/cgv841/ybj/TVI-LFM/logs/sysu_rgb_ir_from_vcm_tracklet/finetune_ep20
+  eval_trials: 5
+  output_dir: /home/cgv841/ybj/TVI-LFM/logs/sysu_rgb_ir_from_vcm_tracklet/contrast_finetune_staged_lr5e5_ep30
 
 eval:
   dataset_root: /home/cgv841/datasets/SYSU-MM01
   batch_size: 128
   num_workers: 8
   num_trials: 10
+  selection_split: val
+  final_split: test
   primary_mode: all
   extra_modes: [indoor]
   protocol: cross_modality

@@ -19,6 +19,7 @@ def parse_args():
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--mode", default="all", choices=["all", "indoor"])
     parser.add_argument("--num-trials", type=int, default=None)
+    parser.add_argument("--id-split", default="test", choices=["train", "val", "test", "trainval"])
     parser.add_argument("--output-json", default=None)
     parser.add_argument("--device", default="cuda")
     return parser.parse_args()
@@ -46,6 +47,9 @@ def main():
         mode=args.mode,
         num_trials=args.num_trials or config["eval"]["num_trials"],
         seed=config["seed"],
+        protocol=config["eval"].get("protocol", "cross_modality"),
+        modality=config["eval"].get("modality"),
+        id_split=args.id_split,
     )
     payload = {"metrics": metrics, "retrieval_examples": retrieval_examples}
     print(payload)

@@ -4,7 +4,7 @@ dataset:
   name: sysumm01
   root: /home/cgv841/datasets/SYSU-MM01
   image_size: [288, 144]
-  use_val: true
+  use_val: false
   train_modality: both
   train_augment: strong_reid
 
@@ -86,6 +86,8 @@ eval:
   batch_size: 128
   num_workers: 8
   num_trials: 10
+  selection_split: val
+  final_split: test
   primary_mode: all
   extra_modes: [indoor]
   protocol: cross_modality

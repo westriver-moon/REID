@@ -56,8 +56,8 @@ train:
   ir_instances: 2
   source_sampling:
     llcm_ratio: 1.0
-  ir_only_num_ids_by_source:
-    vcm: 4
+    vcm_ratio: 1.0
+  ir_only_num_ids_by_source: {}
   num_workers: 8
   freeze_backbone_epochs: 0
   lr: 0.00002
@@ -69,13 +69,15 @@ train:
   amp: true
   clip_grad_norm: 1.0
   eval_trials: 1
-  output_dir: /home/cgv841/ybj/TVI-LFM/logs/external_rgb_ir/vcm_llcm_partial_shared_split4_ep40
+  output_dir: /home/cgv841/ybj/TVI-LFM/logs/external_rgb_ir/vcm_llcm_balanced_partial_shared_split4_ep40
 
 eval:
   dataset_root: /home/cgv841/datasets/SYSU-MM01
   batch_size: 128
   num_workers: 8
-  num_trials: 1
+  num_trials: 10
+  selection_split: val
+  final_split: test
   primary_mode: all
   extra_modes: [indoor]
   protocol: cross_modality

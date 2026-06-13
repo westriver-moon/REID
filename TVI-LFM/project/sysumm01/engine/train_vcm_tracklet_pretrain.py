@@ -164,7 +164,7 @@ def main():
             * (config["train"]["rgb_tracklets_per_id"] + config["train"]["ir_tracklets_per_id"])
             * config["dataset"]["frames_per_tracklet"]
         )
-        effective_images_per_epoch = len(dataset.tracklets) * config["dataset"]["frames_per_tracklet"]
+        effective_images_per_epoch = config["train"]["steps_per_epoch"] * effective_images_per_batch
         print(
             "VCM pretrain setup: K={}, identities/batch={}, rgb_tracklets/id={}, ir_tracklets/id={}, "
             "effective_images/batch={}, effective_images/epoch={}".format(
@@ -225,6 +225,16 @@ def main():
             scheduler.load_state_dict(checkpoint["scheduler"])
             scaler.load_state_dict(checkpoint["scaler"])
             start_epoch = int(checkpoint["epoch"]) + 1
+        sampler.epoch = max(int(start_epoch) - 1, 0)
+        if start_epoch > int(config["train"]["epochs"]):
+            print(
+                "Resume checkpoint is already complete: start_epoch={} > epochs={}".format(
+                    start_epoch,
+                    config["train"]["epochs"],
+                ),
+                flush=True,
+            )
+            return
 
         fieldnames = [
             "epoch",
