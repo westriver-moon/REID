@@ -22,35 +22,20 @@ model:
         stride: [12, 12]
       - patch_size: [16, 8]
         stride: [12, 6]
-  modality_adversarial:
-    enabled: true
-    hidden_dim: 192
-    grl_lambda: 1.0
 
 loss:
   id_weight: 1.0
-  triplet_weight: 0.5
+  triplet_weight: 0.0
   triplet_margin: 0.3
   cross_batch_memory_size: 0
   reset_memory_each_epoch: true
   cross_modal_metric:
     enabled: true
     start_epoch: 1
-    contrast:
-      enabled: false
-      weight: 0.0
-      temperature: 0.07
     triplet:
       enabled: true
       weight: 1.0
       margin: 0.3
-    prototype_memory:
-      enabled: false
-      weight: 0.0
-      momentum: 0.9
-    modality_adversarial:
-      enabled: true
-      weight: 0.03
 
 train:
   init_checkpoint: /home/cgv841/ybj/TVI-LFM/logs/external_rgb_ir/vcm_llcm_partial_shared_split4_ep40/checkpoints/last.pth

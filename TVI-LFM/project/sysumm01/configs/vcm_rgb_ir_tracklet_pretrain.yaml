@@ -1,0 +1,52 @@
+seed: 42
+
+dataset:
+  name: hitsz_vcm_tracklet
+  root: /home/cgv841/datasets/HITSZ-VCM
+  index_path: /home/cgv841/ybj/TVI-LFM/project/sysumm01/datasets/vcm_index/vcm_train_tracklets.json
+  image_size: [288, 144]
+  mode: rgb_ir
+  frames_per_tracklet: 2
+  frame_sampling: random
+  train_augment: strong_reid
+
+model:
+  type: partial_shared_dual_stream
+  branch_type: patch_mean
+  backbone_name: vit_base_patch16_224
+  pretrained_path: /home/cgv841/ybj/pretrained/ViT_190k.pth
+  drop_path_rate: 0.1
+  split_block: 4
+  patch_embed:
+    anchor_branch: 0
+    branches:
+      - patch_size: [16, 16]
+        stride: [12, 12]
+      - patch_size: [16, 8]
+        stride: [12, 6]
+
+loss:
+  id_weight: 1.0
+  triplet_margin: 0.3
+  cm_contrast_weight: 0.2
+  cm_triplet_weight: 1.0
+  temperature: 0.07
+  tracklet_consistency_weight: 0.1
+
+train:
+  epochs: 40
+  steps_per_epoch: 400
+  num_ids: 8
+  rgb_tracklets_per_id: 2
+  ir_tracklets_per_id: 2
+  num_workers: 8
+  freeze_backbone_epochs: 0
+  lr: 0.00005
+  min_lr: 0.000001
+  scheduler: warmup_cosine
+  warmup_epochs: 4
+  warmup_init_lr: 0.000001
+  weight_decay: 0.05
+  amp: true
+  clip_grad_norm: 1.0
+  output_dir: /home/cgv841/ybj/TVI-LFM/logs/vcm_rgb_ir_tracklet/partial_shared_k2_ep40

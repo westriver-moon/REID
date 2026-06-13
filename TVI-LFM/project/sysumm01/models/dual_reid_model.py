@@ -477,7 +477,7 @@ class PartialSharedDualStreamReIDModel(nn.Module):
         nn.init.normal_(self.classifier.weight, std=0.001)
 
         adv_config = model_config.get("modality_adversarial", {})
-        self.use_modality_adversarial = bool(adv_config.get("enabled", True))
+        self.use_modality_adversarial = bool(adv_config.get("enabled", False))
         self.grl_lambda = float(adv_config.get("grl_lambda", 1.0))
         self.modality_classifier = None
         if self.use_modality_adversarial:
