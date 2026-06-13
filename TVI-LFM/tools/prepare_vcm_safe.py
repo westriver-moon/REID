@@ -140,13 +140,15 @@ def parse_frame_metadata(frame_path):
     return None
 
 
-def filter_frames_by_track_metadata(frames, pid, camid, modality):
+def filter_frames_by_track_metadata(frames, pid, camid, modality, strict=True):
     filtered = []
     dropped = 0
     for frame_path in frames:
         metadata = parse_frame_metadata(frame_path)
         if metadata is None:
-            filtered.append(frame_path)
+            if strict:
+                raise ValueError("Cannot parse VCM frame metadata: {}".format(frame_path))
+            dropped += 1
             continue
         if (
             metadata["pid"] == int(pid)
@@ -212,7 +214,8 @@ def build_split(root, split, name_file, info_file, max_frames, sampling, seed):
     pid_to_label = {pid: index for index, pid in enumerate(pids)}
     tracklets = []
     frames_jsonl = []
-    original_frame_count = 0
+    source_range_frame_count = 0
+    metadata_clean_frame_count = 0
     limited_frame_count = 0
     metadata_filtered_frame_count = 0
 
@@ -229,16 +232,18 @@ def build_split(root, split, name_file, info_file, max_frames, sampling, seed):
                     len(frame_names),
                 )
             )
-        original_frames = frame_names[begin:finish]
-        modality = modality_from_code(modality_code) if modality_code is not None else infer_modality(original_frames[0])
-        original_frames, dropped_by_metadata = filter_frames_by_track_metadata(
-            original_frames,
+        raw_frames = frame_names[begin:finish]
+        source_range_frame_count += len(raw_frames)
+        modality = modality_from_code(modality_code) if modality_code is not None else infer_modality(raw_frames[0])
+        clean_frames, dropped_by_metadata = filter_frames_by_track_metadata(
+            raw_frames,
             pid=pid,
             camid=camid,
             modality=modality,
+            strict=True,
         )
         metadata_filtered_frame_count += dropped_by_metadata
-        if not original_frames:
+        if not clean_frames:
             raise ValueError(
                 "No frames remain after metadata filtering for {} tracklet {}: pid={} camid={} modality={}".format(
                     split,
@@ -249,13 +254,13 @@ def build_split(root, split, name_file, info_file, max_frames, sampling, seed):
                 )
             )
         selected_frames = select_frames(
-            original_frames,
+            clean_frames,
             max_frames=max_frames,
             sampling=sampling,
             seed=seed,
             tracklet_id=tracklet_id,
         )
-        original_frame_count += len(original_frames)
+        metadata_clean_frame_count += len(clean_frames)
         limited_frame_count += len(selected_frames)
         tracklet = {
             "tracklet_id": tracklet_id,
@@ -265,7 +270,9 @@ def build_split(root, split, name_file, info_file, max_frames, sampling, seed):
             "modality": modality,
             "frames": selected_frames,
             "num_frames": len(selected_frames),
-            "num_frames_original": len(original_frames),
+            "num_frames_source_range": len(raw_frames),
+            "num_frames_after_metadata_filter": len(clean_frames),
+            "num_frames_original": len(raw_frames),
             "source_range": [int(start), int(end)],
             "extra": extra,
             "modality_code": None if modality_code is None else int(modality_code),
@@ -300,7 +307,9 @@ def build_split(root, split, name_file, info_file, max_frames, sampling, seed):
         "frames": frames_jsonl,
         "num_pids": len(pids),
         "num_tracklets": len(tracklets),
-        "num_frames_original": original_frame_count,
+        "num_frames_source_range": source_range_frame_count,
+        "num_frames_after_metadata_filter": metadata_clean_frame_count,
+        "num_frames_original": source_range_frame_count,
         "num_frames_limited": limited_frame_count,
     }
 
@@ -386,8 +395,18 @@ def build_meta(args, train_result, test_result=None, copy_info=None):
         "num_rgb_tracklets": num_rgb,
         "num_ir_tracklets": num_ir,
         "num_frames_original": train_result["num_frames_original"],
+        "num_frames_source_range": train_result.get("num_frames_source_range", train_result["num_frames_original"]),
+        "num_frames_after_metadata_filter": train_result.get(
+            "num_frames_after_metadata_filter",
+            train_result["num_frames_original"],
+        ),
+        "metadata_filtered_frames": train_result.get("metadata", {}).get("metadata_filtered_frames", 0),
         "num_frames_limited": limited_frames,
         "num_frames_in_original_index": train_result["num_frames_original"],
+        "num_frames_in_clean_index": train_result.get(
+            "num_frames_after_metadata_filter",
+            train_result["num_frames_original"],
+        ),
         "num_frames_in_limited_index": limited_frames,
         "max_frames_per_tracklet": args.max_frames_per_tracklet,
         "sampling": args.sampling,
@@ -401,6 +420,11 @@ def build_meta(args, train_result, test_result=None, copy_info=None):
     }
     if test_result is not None:
         meta["test_num_tracklets"] = test_result["num_tracklets"]
+        meta["test_num_frames_source_range"] = test_result.get("num_frames_source_range", test_result["num_frames_original"])
+        meta["test_num_frames_after_metadata_filter"] = test_result.get(
+            "num_frames_after_metadata_filter",
+            test_result["num_frames_original"],
+        )
         meta["test_num_frames_in_limited_index"] = test_result["num_frames_limited"]
     return meta
 
@@ -453,15 +477,19 @@ def main():
         write_json(output / "vcm_test_tracklets.json", {"metadata": test_result["metadata"], "tracklets": test_result["tracklets"]})
         write_jsonl(output / "vcm_test_frames.jsonl", test_result["frames"])
 
+    copy_results = [result for result in (train_result, test_result) if result is not None]
     if train_result is None:
         train_result = test_result
     copy_info = None
     if args.copy_subset:
         subset_root = Path(args.subset_root).resolve() if args.subset_root else root.parent / "{}-subset".format(root.name)
+        copy_tracklets = []
+        for split_result in copy_results:
+            copy_tracklets.extend(split_result["tracklets"])
         copy_info = copy_subset(
             root=root,
             subset_root=subset_root,
-            split_result=train_result,
+            split_result={"tracklets": copy_tracklets},
             min_free_gb=args.min_free_gb,
             delete_source=args.delete_source,
         )

@@ -10,6 +10,9 @@ dataset:
     - name: vcm
       root: /home/cgv841/datasets/HITSZ-VCM
       index: /home/cgv841/ybj/TVI-LFM/project/sysumm01/datasets/vcm_index/vcm_train_tracklets.json
+      expected_sha256: c8854abdbfd5e4933361fa43437be4874fcee8737d9caa1131af0d0f274786a3
+      expected_metadata_filtered_frames: 745
+      strict_vcm_metadata: true
 
 model:
   type: partial_shared_dual_stream
@@ -30,6 +33,7 @@ loss:
   id_weight: 1.0
   triplet_weight: 0.0
   triplet_margin: 0.3
+  tracklet_consistency_weight: 0.1
   cross_batch_memory_size: 0
   reset_memory_each_epoch: true
   cross_modal_metric:

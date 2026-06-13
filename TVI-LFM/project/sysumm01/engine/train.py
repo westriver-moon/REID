@@ -150,7 +150,7 @@ def get_schp_eval_kwargs(config):
 def parse_args():
     parser = argparse.ArgumentParser(description="Train the local SYSU-MM01 model")
     parser.add_argument("--config", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--output", default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--resume", default=None)
@@ -871,7 +871,9 @@ def main():
         config["seed"] = args.seed
     config["model"]["image_size"] = list(config["dataset"]["image_size"])
 
-    output_dir = args.output
+    output_dir = args.output or config.get("train", {}).get("output_dir")
+    if not output_dir:
+        raise ValueError("Training requires --output or train.output_dir in the config")
     ensure_dir(output_dir)
     ensure_dir(os.path.join(output_dir, "checkpoints"))
     dump_config(config, os.path.join(output_dir, "config.yaml"))
@@ -1071,6 +1073,15 @@ def main():
             best_map = checkpoint.get("best_map", -1.0)
         if hasattr(batch_sampler, "epoch"):
             batch_sampler.epoch = max(int(start_epoch) - 1, 0)
+        if args.resume and start_epoch > int(config["train"]["epochs"]):
+            print(
+                "Resume checkpoint is already complete: start_epoch={} > epochs={}".format(
+                    start_epoch,
+                    config["train"]["epochs"],
+                ),
+                flush=True,
+            )
+            return
 
         if args.eval_only:
             ckpt_path = args.checkpoint or args.resume
@@ -1161,6 +1172,7 @@ def main():
             cm_neg_dist_meter = AverageMeter()
             cm_gap_meter = AverageMeter()
             num_steps = len(train_loader)
+            epoch_lr = optimizer.param_groups[0]["lr"]
 
             print(
                 "[Epoch {:03d}/{:03d}] start ({} batches)".format(epoch, config["train"]["epochs"], num_steps),
@@ -1286,14 +1298,12 @@ def main():
                         flush=True,
                     )
 
-            scheduler.step()
-
             eval_trials = config["train"].get("eval_trials", 2)
             metrics = evaluate_and_save(model, config, output_dir, device, epoch, num_trials=eval_trials)
             epoch_seconds = time.time() - start_time
             row = {
                 "epoch": epoch,
-                "lr": optimizer.param_groups[0]["lr"],
+                "lr": epoch_lr,
                 "train_loss": total_meter.avg,
                 "id_loss": id_meter.avg,
                 "triplet_loss": triplet_meter.avg,
@@ -1319,6 +1329,8 @@ def main():
             is_best = metrics["mAP"] > best_map
             if is_best:
                 best_map = metrics["mAP"]
+
+            scheduler.step()
 
             state = {
                 "epoch": epoch,

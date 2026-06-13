@@ -1,6 +1,7 @@
 import json
 import os
 import random
+import re
 from collections import defaultdict
 
 import torch
@@ -17,6 +18,18 @@ from project.sysumm01.datasets.sysumm01 import build_train_records, build_transf
 
 
 MODALITY_TO_ID = {"rgb": 0, "ir": 1}
+VCM_FRAME_RE = re.compile(
+    r"^(?P<pid>\d+)M(?P<modality>\d+)D(?P<camera>\d+)T(?P<track>\d+)F(?P<frame>\d+)(?P<ext>\.[^.]+)$",
+    re.IGNORECASE,
+)
+
+
+def _modality_from_code(code):
+    if int(code) == 1:
+        return "ir"
+    if int(code) == 2:
+        return "rgb"
+    raise ValueError("Unsupported VCM modality code: {}".format(code))
 
 
 def normalize_vcm_mode(mode):
@@ -55,31 +68,41 @@ def _filter_existing_frames(root, frames):
 def _parse_vcm_frame_metadata(frame_path):
     parts = frame_path.replace("\\", "/").split("/")
     lowered = [part.lower() for part in parts]
-    if "data" not in lowered:
-        return None
-    data_index = lowered.index("data")
-    if len(parts) <= data_index + 3:
-        return None
-    modality = parts[data_index + 2].lower()
-    camera_text = parts[data_index + 3]
-    if modality not in ("rgb", "ir") or not camera_text.lower().startswith("d"):
-        return None
-    try:
+    for anchor in ("data", "train"):
+        if anchor not in lowered:
+            continue
+        data_index = lowered.index(anchor)
+        if len(parts) <= data_index + 3:
+            continue
+        modality = parts[data_index + 2].lower()
+        camera_text = parts[data_index + 3]
+        if modality not in ("rgb", "ir") or not camera_text.lower().startswith("d"):
+            continue
+        try:
+            return {
+                "pid": int(parts[data_index + 1]),
+                "modality": modality,
+                "camid": int(camera_text[1:]),
+            }
+        except ValueError:
+            continue
+    match = VCM_FRAME_RE.match(os.path.basename(frame_path))
+    if match:
         return {
-            "pid": int(parts[data_index + 1]),
-            "modality": modality,
-            "camid": int(camera_text[1:]),
+            "pid": int(match.group("pid")),
+            "modality": _modality_from_code(match.group("modality")),
+            "camid": int(match.group("camera")),
         }
-    except ValueError:
-        return None
+    return None
 
 
-def _filter_frames_by_metadata(frames, pid, camid, modality):
+def _filter_frames_by_metadata(frames, pid, camid, modality, strict=True):
     filtered = []
     for frame_path in frames:
         metadata = _parse_vcm_frame_metadata(frame_path)
         if metadata is None:
-            filtered.append(frame_path)
+            if strict:
+                raise ValueError("Cannot parse VCM frame metadata: {}".format(frame_path))
             continue
         if (
             metadata["pid"] == int(pid)
@@ -126,6 +149,7 @@ class VCMTrackletDataset(Dataset):
         frame_sampling="random",
         train_augment="strong_reid",
         index_path=None,
+        strict_vcm_metadata=True,
         schp_mask_root=None,
         schp_min_part_pixels=4,
         schp_allow_fallback=True,
@@ -142,6 +166,7 @@ class VCMTrackletDataset(Dataset):
         self.tracklet_json = tracklet_json
         self.mode = normalize_vcm_mode(mode)
         self.schp_mask_root = schp_mask_root
+        self.strict_vcm_metadata = bool(strict_vcm_metadata)
         self.schp_min_part_pixels = int(schp_min_part_pixels)
         self.schp_allow_fallback = bool(schp_allow_fallback)
         self.schp_quality_index = load_quality_index(schp_quality_index)
@@ -175,6 +200,7 @@ class VCMTrackletDataset(Dataset):
                 pid=int(item["pid"]),
                 camid=int(item["camid"]),
                 modality=modality,
+                strict=self.strict_vcm_metadata,
             )
             missing_frame_count += missing_count
             if not frames:
@@ -388,6 +414,7 @@ class SYSUIRVCMIRDataset(Dataset):
         return_part_masks=False,
         vcm_sampling_top_ratio=0.5,
         vcm_sampling_temperature=0.7,
+        strict_vcm_metadata=True,
     ):
         self.vcm_root = vcm_root
         self.sysu_root = sysu_root
@@ -416,6 +443,7 @@ class SYSUIRVCMIRDataset(Dataset):
         self.return_part_masks = bool(return_part_masks)
         self.vcm_sampling_top_ratio = float(vcm_sampling_top_ratio)
         self.vcm_sampling_temperature = float(vcm_sampling_temperature)
+        self.strict_vcm_metadata = bool(strict_vcm_metadata)
         self.use_mask_pipeline = schp_mask_root is not None and (self.schp_aug_enabled or self.return_part_masks)
         if self.use_mask_pipeline:
             self.transform = PairedImagePartTransform(
@@ -471,6 +499,7 @@ class SYSUIRVCMIRDataset(Dataset):
                 pid=int(item["pid"]),
                 camid=int(item["camid"]),
                 modality="ir",
+                strict=self.strict_vcm_metadata,
             )
             missing_frame_count += missing_count
             if not frames:

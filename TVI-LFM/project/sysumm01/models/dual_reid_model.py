@@ -602,7 +602,7 @@ class PartialSharedDualStreamReIDModel(nn.Module):
         logits = self.classifier(bn_features)
         outputs = {
             "logits": logits,
-            "global_feat": bn_features,
+            "global_feat": features,
             "embeddings": F.normalize(bn_features, dim=1),
             "patch_scores": patch_scores,
         }

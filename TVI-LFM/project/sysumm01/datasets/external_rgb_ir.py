@@ -1,6 +1,8 @@
 import json
+import hashlib
 import os
 import random
+import re
 from collections import Counter, defaultdict
 
 import torch
@@ -11,11 +13,31 @@ from project.sysumm01.datasets.sysumm01 import build_transforms
 
 
 MODALITY_TO_ID = {"rgb": 0, "ir": 1}
+VCM_FRAME_RE = re.compile(
+    r"^(?P<pid>\d+)M(?P<modality>\d+)D(?P<camera>\d+)T(?P<track>\d+)F(?P<frame>\d+)(?P<ext>\.[^.]+)$",
+    re.IGNORECASE,
+)
+
+
+def _modality_from_code(code):
+    if int(code) == 1:
+        return "ir"
+    if int(code) == 2:
+        return "rgb"
+    raise ValueError("Unsupported VCM modality code: {}".format(code))
 
 
 def _load_json(path):
     with open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _resolve_path(root, path):
@@ -49,31 +71,41 @@ def _infer_modality_from_frames(default_modality, frames):
 def _parse_vcm_frame_metadata(frame_path):
     parts = frame_path.replace("\\", "/").split("/")
     lowered = [part.lower() for part in parts]
-    if "data" not in lowered:
-        return None
-    data_index = lowered.index("data")
-    if len(parts) <= data_index + 3:
-        return None
-    modality = parts[data_index + 2].lower()
-    camera_text = parts[data_index + 3]
-    if modality not in ("rgb", "ir") or not camera_text.lower().startswith("d"):
-        return None
-    try:
+    for anchor in ("data", "train"):
+        if anchor not in lowered:
+            continue
+        data_index = lowered.index(anchor)
+        if len(parts) <= data_index + 3:
+            continue
+        modality = parts[data_index + 2].lower()
+        camera_text = parts[data_index + 3]
+        if modality not in ("rgb", "ir") or not camera_text.lower().startswith("d"):
+            continue
+        try:
+            return {
+                "pid": int(parts[data_index + 1]),
+                "modality": modality,
+                "camid": int(camera_text[1:]),
+            }
+        except ValueError:
+            continue
+    match = VCM_FRAME_RE.match(os.path.basename(frame_path))
+    if match:
         return {
-            "pid": int(parts[data_index + 1]),
-            "modality": modality,
-            "camid": int(camera_text[1:]),
+            "pid": int(match.group("pid")),
+            "modality": _modality_from_code(match.group("modality")),
+            "camid": int(match.group("camera")),
         }
-    except ValueError:
-        return None
+    return None
 
 
-def _filter_frames_by_metadata(frames, pid, camid, modality):
+def _filter_frames_by_metadata(frames, pid, camid, modality, strict=True):
     filtered = []
     for frame_path in frames:
         metadata = _parse_vcm_frame_metadata(frame_path)
         if metadata is None:
-            filtered.append(frame_path)
+            if strict:
+                raise ValueError("Cannot parse VCM frame metadata: {}".format(frame_path))
             continue
         if (
             metadata["pid"] == int(pid)
@@ -112,14 +144,39 @@ class ExternalRGBIRDataset(Dataset):
 
         self.samples = []
         self.source_counts = {}
+        self.strict_vcm_metadata_by_source = {}
         label_offset = 0
         for index_config in indices:
             name = index_config["name"]
+            self.strict_vcm_metadata_by_source[name] = bool(index_config.get("strict_vcm_metadata", name == "vcm"))
             root = index_config.get("root")
-            payload = _load_json(index_config["index"])
+            index_path = index_config["index"]
+            expected_sha256 = index_config.get("expected_sha256")
+            if expected_sha256:
+                actual_sha256 = _sha256_file(index_path)
+                if actual_sha256 != expected_sha256:
+                    raise RuntimeError(
+                        "Index SHA256 mismatch for {}: expected {}, got {}".format(
+                            index_path,
+                            expected_sha256,
+                            actual_sha256,
+                        )
+                    )
+            payload = _load_json(index_path)
+            expected_filtered = index_config.get("expected_metadata_filtered_frames")
+            if expected_filtered is not None:
+                actual_filtered = payload.get("metadata", {}).get("metadata_filtered_frames")
+                if int(actual_filtered or 0) != int(expected_filtered):
+                    raise RuntimeError(
+                        "Index metadata_filtered_frames mismatch for {}: expected {}, got {}".format(
+                            index_path,
+                            expected_filtered,
+                            actual_filtered,
+                        )
+                    )
             root = root or payload.get("metadata", {}).get("root")
             if root is None:
-                raise ValueError("Index {} has no root and no root was configured".format(index_config["index"]))
+                raise ValueError("Index {} has no root and no root was configured".format(index_path))
             root = os.path.abspath(root)
 
             raw_items = self._read_items(name, root, payload)
@@ -218,6 +275,7 @@ class ExternalRGBIRDataset(Dataset):
                     pid=int(raw["pid"]),
                     camid=int(raw["camid"]),
                     modality=modality,
+                    strict=self.strict_vcm_metadata_by_source.get(name, True),
                 )
                 if not frames:
                     continue
@@ -367,19 +425,28 @@ def collate_external_rgb_ir(batch):
     pids = []
     camids = []
     modalities = []
+    tracklet_groups = []
+    tracklet_ids = []
     sources = []
     paths = []
     sample_types = []
+    next_group = 0
     for item in batch:
         image = item["image"]
         if image.ndim == 3:
             image = image.unsqueeze(0)
         count = image.shape[0]
+        is_tracklet = item["sample_type"] == "tracklet" and count > 1
+        group_id = next_group if is_tracklet else -1
+        if is_tracklet:
+            next_group += 1
         images.append(image)
         labels.extend([int(item["label"])] * count)
         pids.extend([int(item["pid"])] * count)
         camids.extend([int(item["camid"])] * count)
         modalities.extend([int(item["modality"])] * count)
+        tracklet_groups.extend([group_id] * count)
+        tracklet_ids.extend([item.get("tracklet_id", "")] * count)
         sources.extend([item["source"]] * count)
         sample_types.extend([item["sample_type"]] * count)
         path = item["path"]
@@ -394,6 +461,8 @@ def collate_external_rgb_ir(batch):
         "pid": torch.tensor(pids, dtype=torch.long),
         "camid": torch.tensor(camids, dtype=torch.long),
         "modality": torch.tensor(modalities, dtype=torch.long),
+        "tracklet_group": torch.tensor(tracklet_groups, dtype=torch.long),
+        "tracklet_id": tracklet_ids,
         "source": sources,
         "path": paths,
         "sample_type": sample_types,
