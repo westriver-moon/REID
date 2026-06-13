@@ -399,6 +399,198 @@ class FrozenDualViTSharedHead(nn.Module):
         return outputs["embeddings"]
 
 
+class GradReverse(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, tensor, lambd):
+        ctx.lambd = float(lambd)
+        return tensor.view_as(tensor)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return -ctx.lambd * grad_output, None
+
+
+def grad_reverse(tensor, lambd=1.0):
+    return GradReverse.apply(tensor, lambd)
+
+
+def _run_vit_stem(vit, images):
+    tokens = vit.patch_embed(images)
+    if hasattr(vit, "_pos_embed"):
+        tokens = vit._pos_embed(tokens)
+    else:
+        if getattr(vit, "cls_token", None) is not None:
+            cls_token = vit.cls_token.expand(tokens.shape[0], -1, -1)
+            tokens = torch.cat((cls_token, tokens), dim=1)
+        tokens = tokens + vit.pos_embed
+    tokens = vit.patch_drop(tokens)
+    tokens = vit.norm_pre(tokens)
+    return tokens
+
+
+class PartialSharedDualStreamReIDModel(nn.Module):
+    """RGB/IR dual stream ViT with modality-specific low blocks and shared high blocks."""
+
+    def __init__(self, model_config, num_classes):
+        super().__init__()
+        split_block = int(model_config.get("split_block", 4))
+        if split_block < 0:
+            raise ValueError("split_block must be non-negative")
+
+        branch_config = {
+            "type": model_config.get("branch_type", "patch_mean"),
+            "backbone_name": model_config["backbone_name"],
+            "pretrained_path": model_config.get("pretrained_path"),
+            "drop_path_rate": model_config.get("drop_path_rate", 0.0),
+            "image_size": model_config.get("image_size"),
+            "patch_embed": model_config.get("patch_embed"),
+        }
+        rgb_config = dict(branch_config)
+        rgb_config.update(model_config.get("rgb_model", {}))
+        ir_config = dict(branch_config)
+        ir_config.update(model_config.get("ir_model", {}))
+
+        self.rgb_backbone = build_backbone(rgb_config)
+        self.ir_backbone = build_backbone(ir_config)
+        if self.rgb_backbone.feature_dim != self.ir_backbone.feature_dim:
+            raise ValueError("RGB/IR feature dims must match")
+        feature_dim = self.rgb_backbone.feature_dim
+        total_blocks = len(self.rgb_backbone.vit.blocks)
+        if len(self.ir_backbone.vit.blocks) != total_blocks:
+            raise ValueError("RGB/IR ViT block counts must match")
+        if split_block > total_blocks:
+            raise ValueError("split_block {} exceeds ViT blocks {}".format(split_block, total_blocks))
+
+        rgb_blocks = list(self.rgb_backbone.vit.blocks)
+        ir_blocks = list(self.ir_backbone.vit.blocks)
+        self.rgb_backbone.vit.blocks = nn.ModuleList(rgb_blocks[:split_block])
+        self.ir_backbone.vit.blocks = nn.ModuleList(ir_blocks[:split_block])
+        self.shared_blocks = nn.ModuleList(rgb_blocks[split_block:])
+        self.shared_norm = self.rgb_backbone.vit.norm
+        self.shared_fc_norm = self.rgb_backbone.vit.fc_norm
+        self.feature_dim = feature_dim
+        self.split_block = split_block
+
+        self.bnneck = nn.BatchNorm1d(feature_dim)
+        self.bnneck.bias.requires_grad_(False)
+        self.classifier = nn.Linear(feature_dim, num_classes, bias=False)
+        nn.init.normal_(self.classifier.weight, std=0.001)
+
+        adv_config = model_config.get("modality_adversarial", {})
+        self.use_modality_adversarial = bool(adv_config.get("enabled", True))
+        self.grl_lambda = float(adv_config.get("grl_lambda", 1.0))
+        self.modality_classifier = None
+        if self.use_modality_adversarial:
+            hidden_dim = int(adv_config.get("hidden_dim", max(feature_dim // 4, 128)))
+            self.modality_classifier = nn.Sequential(
+                nn.Linear(feature_dim, hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(hidden_dim, 2),
+            )
+
+    @staticmethod
+    def _set_branch_trainable(module, trainable, last_blocks=None):
+        for parameter in module.parameters():
+            parameter.requires_grad_(False)
+        if not trainable:
+            return
+        if not last_blocks:
+            for parameter in module.parameters():
+                parameter.requires_grad_(True)
+            return
+        blocks = getattr(getattr(module, "vit", None), "blocks", None)
+        if blocks is None:
+            for parameter in module.parameters():
+                parameter.requires_grad_(True)
+            return
+        for block in blocks[-int(last_blocks) :]:
+            for parameter in block.parameters():
+                parameter.requires_grad_(True)
+
+    def set_backbones_trainable(self, trainable, last_blocks=None):
+        self._set_branch_trainable(self.rgb_backbone, trainable, last_blocks=last_blocks)
+        self._set_branch_trainable(self.ir_backbone, trainable, last_blocks=last_blocks)
+        for parameter in self.shared_blocks.parameters():
+            parameter.requires_grad_(bool(trainable))
+        if bool(trainable):
+            for layer in (self.shared_norm, self.shared_fc_norm):
+                for parameter in layer.parameters():
+                    parameter.requires_grad_(True)
+
+    def set_backbones_eval(self):
+        self.rgb_backbone.eval()
+        self.ir_backbone.eval()
+        self.shared_blocks.eval()
+        self.shared_norm.eval()
+        self.shared_fc_norm.eval()
+
+    def _forward_branch(self, images, modality_id):
+        if modality_id == 0:
+            vit = self.rgb_backbone.vit
+        else:
+            vit = self.ir_backbone.vit
+        tokens = _run_vit_stem(vit, images)
+        for block in vit.blocks:
+            tokens = block(tokens)
+        for block in self.shared_blocks:
+            tokens = block(tokens)
+        tokens = self.shared_norm(tokens)
+        patch_tokens = tokens[:, vit.num_prefix_tokens :]
+        patch_scores = patch_tokens.norm(dim=-1)
+        features = patch_tokens.mean(dim=1)
+        features = self.shared_fc_norm(features)
+        head_drop = getattr(vit, "head_drop", None)
+        if head_drop is not None:
+            features = head_drop(features)
+        return features, patch_scores
+
+    def forward(self, images, part_masks=None, modality=None):
+        if modality is None:
+            raise ValueError("PartialSharedDualStreamReIDModel.forward requires modality tensor")
+        if part_masks is not None:
+            raise ValueError("PartialSharedDualStreamReIDModel does not support part_masks")
+        if not torch.is_tensor(modality):
+            modality = torch.as_tensor(modality, device=images.device)
+        else:
+            modality = modality.to(images.device)
+
+        batch_size = images.shape[0]
+        features = None
+        patch_scores = None
+        for modality_id in (0, 1):
+            mask = modality == modality_id
+            if not mask.any():
+                continue
+            branch_features, branch_scores = self._forward_branch(images[mask], modality_id)
+            if features is None:
+                features = branch_features.new_zeros((batch_size, branch_features.shape[1]))
+            features[mask] = branch_features
+            if patch_scores is None:
+                patch_scores = branch_scores.new_zeros((batch_size,) + tuple(branch_scores.shape[1:]))
+            patch_scores[mask] = branch_scores
+        if features is None:
+            raise ValueError("PartialSharedDualStreamReIDModel received no RGB/IR samples in batch")
+
+        bn_features = self.bnneck(features)
+        logits = self.classifier(bn_features)
+        outputs = {
+            "logits": logits,
+            "global_feat": bn_features,
+            "embeddings": F.normalize(bn_features, dim=1),
+            "patch_scores": patch_scores,
+        }
+        if self.modality_classifier is not None:
+            outputs["modality_logits"] = self.modality_classifier(grad_reverse(outputs["embeddings"], self.grl_lambda))
+        return outputs
+
+    @torch.no_grad()
+    def extract_features(self, images, return_patch_scores=False, part_masks=None, modality=None):
+        outputs = self.forward(images, part_masks=part_masks, modality=modality)
+        if return_patch_scores:
+            return outputs["embeddings"], outputs["patch_scores"]
+        return outputs["embeddings"]
+
+
 class ModalityAdapter(nn.Module):
     """Light residual MLP that maps modality-specific features before sharing."""
 

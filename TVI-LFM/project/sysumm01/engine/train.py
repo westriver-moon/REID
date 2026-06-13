@@ -25,6 +25,11 @@ from project.sysumm01.datasets.sysumm01 import (
     MixedRGBTrainDataset,
     SYSUTrainDataset,
 )
+from project.sysumm01.datasets.external_rgb_ir import (
+    ExternalRGBIRDataset,
+    ExternalRGBIRSampler,
+    collate_external_rgb_ir,
+)
 from project.sysumm01.datasets.vcm import SYSUIRVCMIRDataset, SYSUIRVCMIRSampler, collate_sysu_ir_vcm_ir
 from project.sysumm01.engine.evaluator import evaluate_sysu
 from project.sysumm01.losses.triplet import BatchHardTripletLoss
@@ -742,6 +747,24 @@ def compute_rgb_ir_alignment_losses(outputs, labels, batch, loss_config, epoch):
     return clip_loss, proto_loss
 
 
+def compute_modality_adversarial_loss(outputs, batch, loss_config):
+    metric_config = loss_config.get("cross_modal_metric", {})
+    adv_config = metric_config.get("modality_adversarial", loss_config.get("modality_adversarial", {}))
+    zero = outputs["global_feat"].new_tensor(0.0)
+    if not bool(adv_config.get("enabled", False)) or "modality_logits" not in outputs or "modality" not in batch:
+        return zero, zero
+    modalities = batch["modality"]
+    if not torch.is_tensor(modalities):
+        modalities = torch.as_tensor(modalities, device=outputs["modality_logits"].device)
+    else:
+        modalities = modalities.to(outputs["modality_logits"].device, non_blocking=True)
+    logits = outputs["modality_logits"]
+    loss = float(adv_config.get("weight", 0.0) or 0.0) * F.cross_entropy(logits, modalities.long())
+    with torch.no_grad():
+        acc = (logits.argmax(dim=1) == modalities.long()).float().mean()
+    return loss, acc
+
+
 def get_final_eval_modes(config):
     primary_mode = config["eval"].get("primary_mode", "all")
     modes = [primary_mode]
@@ -876,6 +899,14 @@ def main():
                 vcm_sampling_top_ratio=config["dataset"].get("vcm_sampling_top_ratio", 0.5),
                 vcm_sampling_temperature=config["dataset"].get("vcm_sampling_temperature", 0.7),
             )
+        elif dataset_name == "external_rgb_ir":
+            train_dataset = ExternalRGBIRDataset(
+                indices=config["dataset"]["indices"],
+                image_size=tuple(config["dataset"]["image_size"]),
+                train_augment=config["dataset"].get("train_augment", "strong_reid"),
+                frames_per_tracklet=config["dataset"].get("frames_per_tracklet", 2),
+                frame_sampling=config["dataset"].get("frame_sampling", "random"),
+            )
         else:
             raise ValueError("Unsupported dataset.name: {}".format(dataset_name))
         config["dataset"]["num_classes"] = train_dataset.num_classes
@@ -893,6 +924,17 @@ def main():
                 num_instances=config["train"]["num_instances"],
                 num_batches=config["train"]["steps_per_epoch"],
                 seed=config["seed"],
+            )
+        elif dataset_name == "external_rgb_ir":
+            batch_sampler = ExternalRGBIRSampler(
+                dataset=train_dataset,
+                num_ids=config["train"]["num_ids"],
+                rgb_instances=config["train"].get("rgb_instances", config["train"]["num_instances"]),
+                ir_instances=config["train"].get("ir_instances", config["train"]["num_instances"]),
+                num_batches=config["train"]["steps_per_epoch"],
+                seed=config["seed"],
+                source_sampling=config["train"].get("source_sampling"),
+                ir_only_num_ids_by_source=config["train"].get("ir_only_num_ids_by_source"),
             )
         elif dataset_name == "sysumm01" and config["dataset"].get("train_modality", "both") == "both":
             batch_sampler = CrossModalBatchSampler(
@@ -928,7 +970,13 @@ def main():
             batch_sampler=batch_sampler,
             num_workers=config["train"]["num_workers"],
             pin_memory=True,
-            collate_fn=collate_sysu_ir_vcm_ir if dataset_name == "sysu_ir_vcm_ir" else None,
+            collate_fn=(
+                collate_sysu_ir_vcm_ir
+                if dataset_name == "sysu_ir_vcm_ir"
+                else collate_external_rgb_ir
+                if dataset_name == "external_rgb_ir"
+                else None
+            ),
         )
 
         model = build_reid_model(model_config=config["model"], num_classes=train_dataset.num_classes)
@@ -1031,6 +1079,8 @@ def main():
             "cm_contrast_loss",
             "cm_triplet_loss",
             "memory_proto_loss",
+            "modality_adv_loss",
+            "modality_acc",
             "cm_pos_dist",
             "cm_neg_dist",
             "cm_dist_gap",
@@ -1071,6 +1121,8 @@ def main():
             cm_contrast_meter = AverageMeter()
             cm_triplet_meter = AverageMeter()
             memory_proto_meter = AverageMeter()
+            modality_adv_meter = AverageMeter()
+            modality_acc_meter = AverageMeter()
             cm_pos_dist_meter = AverageMeter()
             cm_neg_dist_meter = AverageMeter()
             cm_gap_meter = AverageMeter()
@@ -1133,6 +1185,11 @@ def main():
                         epoch,
                         proto_memory=proto_memory,
                     )
+                    modality_adv_loss, modality_acc = compute_modality_adversarial_loss(
+                        outputs,
+                        batch,
+                        config["loss"],
+                    )
                     total_loss = (
                         id_loss
                         + tri_loss
@@ -1143,6 +1200,7 @@ def main():
                         + cm_contrast_loss
                         + cm_triplet_loss
                         + memory_proto_loss
+                        + modality_adv_loss
                     )
 
                 scaler.scale(total_loss).backward()
@@ -1163,13 +1221,15 @@ def main():
                 cm_contrast_meter.update(cm_contrast_loss.item(), batch_size)
                 cm_triplet_meter.update(cm_triplet_loss.item(), batch_size)
                 memory_proto_meter.update(memory_proto_loss.item(), batch_size)
+                modality_adv_meter.update(modality_adv_loss.item(), batch_size)
+                modality_acc_meter.update(modality_acc.item(), batch_size)
                 cm_pos_dist_meter.update(cm_pos_dist.item(), batch_size)
                 cm_neg_dist_meter.update(cm_neg_dist.item(), batch_size)
                 cm_gap_meter.update(cm_dist_gap.item(), batch_size)
 
                 if step == 1 or step % max(args.print_freq, 1) == 0 or step == num_steps:
                     print(
-                        "[Epoch {:03d}/{:03d}] step {:04d}/{:04d} lr={:.6g} loss={:.4f} id={:.4f} triplet={:.4f} cons={:.4f} part_id={:.4f} rgb_ir_clip={:.4f} proto={:.4f} cm_contrast={:.4f} cm_triplet={:.4f} mem_proto={:.4f} cm_gap={:.4f}".format(
+                        "[Epoch {:03d}/{:03d}] step {:04d}/{:04d} lr={:.6g} loss={:.4f} id={:.4f} triplet={:.4f} cons={:.4f} part_id={:.4f} rgb_ir_clip={:.4f} proto={:.4f} cm_contrast={:.4f} cm_triplet={:.4f} mem_proto={:.4f} mod_adv={:.4f} mod_acc={:.3f} cm_gap={:.4f}".format(
                             epoch,
                             config["train"]["epochs"],
                             step,
@@ -1185,6 +1245,8 @@ def main():
                             cm_contrast_meter.avg,
                             cm_triplet_meter.avg,
                             memory_proto_meter.avg,
+                            modality_adv_meter.avg,
+                            modality_acc_meter.avg,
                             cm_gap_meter.avg,
                         ),
                         flush=True,
@@ -1208,6 +1270,8 @@ def main():
                 "cm_contrast_loss": cm_contrast_meter.avg,
                 "cm_triplet_loss": cm_triplet_meter.avg,
                 "memory_proto_loss": memory_proto_meter.avg,
+                "modality_adv_loss": modality_adv_meter.avg,
+                "modality_acc": modality_acc_meter.avg,
                 "cm_pos_dist": cm_pos_dist_meter.avg,
                 "cm_neg_dist": cm_neg_dist_meter.avg,
                 "cm_dist_gap": cm_gap_meter.avg,
