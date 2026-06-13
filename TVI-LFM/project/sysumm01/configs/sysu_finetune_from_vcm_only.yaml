@@ -65,7 +65,9 @@ eval:
   num_workers: 8
   num_trials: 10
   selection_split: val
+  final_seed: 0
   final_split: test
+  run_final_test: true
   primary_mode: all
   extra_modes: [indoor]
   protocol: cross_modality

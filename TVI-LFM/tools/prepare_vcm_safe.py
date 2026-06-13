@@ -373,7 +373,9 @@ def copy_subset(root, subset_root, split_result, min_free_gb, delete_source):
 
 
 def check_required_files(root, split):
-    required = [root / "data", root / "train_name.txt", root / "track_train_info.txt"]
+    required = [root / "data"]
+    if split in ("train", "all"):
+        required.extend([root / "train_name.txt", root / "track_train_info.txt"])
     if split in ("test", "all"):
         required.extend([root / "test_name.txt", root / "track_test_info.txt", root / "query_IDX.txt"])
     missing = [str(path) for path in required if not path.exists()]
@@ -381,44 +383,50 @@ def check_required_files(root, split):
         raise FileNotFoundError("Missing required HITSZ-VCM files/directories: {}".format(", ".join(missing)))
 
 
-def build_meta(args, train_result, test_result=None, copy_info=None):
-    tracklets = train_result["tracklets"]
+def build_meta(args, train_result=None, test_result=None, copy_info=None):
+    primary_result = train_result if train_result is not None else test_result
+    if primary_result is None:
+        raise ValueError("No VCM split result was built")
+
+    primary_split = "train" if train_result is not None else "test"
+    tracklets = primary_result["tracklets"]
     num_rgb = sum(1 for item in tracklets if item["modality"] == "rgb")
     num_ir = sum(1 for item in tracklets if item["modality"] == "ir")
-    limited_frames = train_result["num_frames_limited"]
+    limited_frames = primary_result["num_frames_limited"]
     meta = {
         "dataset": "HITSZ-VCM",
         "split": args.split,
+        "primary_split": primary_split,
         "root": str(Path(args.root).resolve()),
-        "num_pids": train_result["num_pids"],
-        "num_tracklets": train_result["num_tracklets"],
+        "num_pids": primary_result["num_pids"],
+        "num_tracklets": primary_result["num_tracklets"],
         "num_rgb_tracklets": num_rgb,
         "num_ir_tracklets": num_ir,
-        "num_frames_original": train_result["num_frames_original"],
-        "num_frames_source_range": train_result.get("num_frames_source_range", train_result["num_frames_original"]),
-        "num_frames_after_metadata_filter": train_result.get(
+        "num_frames_original": primary_result["num_frames_original"],
+        "num_frames_source_range": primary_result.get("num_frames_source_range", primary_result["num_frames_original"]),
+        "num_frames_after_metadata_filter": primary_result.get(
             "num_frames_after_metadata_filter",
-            train_result["num_frames_original"],
+            primary_result["num_frames_original"],
         ),
-        "metadata_filtered_frames": train_result.get("metadata", {}).get("metadata_filtered_frames", 0),
+        "metadata_filtered_frames": primary_result.get("metadata", {}).get("metadata_filtered_frames", 0),
         "num_frames_limited": limited_frames,
-        "num_frames_in_original_index": train_result["num_frames_original"],
-        "num_frames_in_clean_index": train_result.get(
+        "num_frames_in_original_index": primary_result["num_frames_original"],
+        "num_frames_in_clean_index": primary_result.get(
             "num_frames_after_metadata_filter",
-            train_result["num_frames_original"],
+            primary_result["num_frames_original"],
         ),
         "num_frames_in_limited_index": limited_frames,
         "max_frames_per_tracklet": args.max_frames_per_tracklet,
         "sampling": args.sampling,
-        "estimated_effective_images_per_epoch_for_K1": min(1, 4) * train_result["num_tracklets"],
-        "estimated_effective_images_per_epoch_for_K2": min(2, 4) * train_result["num_tracklets"],
-        "estimated_effective_images_per_epoch_for_K3": min(3, 4) * train_result["num_tracklets"],
-        "estimated_effective_images_per_epoch_for_K4": min(4, 4) * train_result["num_tracklets"],
+        "estimated_effective_images_per_epoch_for_K1": min(1, 4) * primary_result["num_tracklets"],
+        "estimated_effective_images_per_epoch_for_K2": min(2, 4) * primary_result["num_tracklets"],
+        "estimated_effective_images_per_epoch_for_K3": min(3, 4) * primary_result["num_tracklets"],
+        "estimated_effective_images_per_epoch_for_K4": min(4, 4) * primary_result["num_tracklets"],
         "copy_subset": bool(args.copy_subset),
         "copy_info": copy_info,
         "academic_notice": ACADEMIC_NOTICE,
     }
-    if test_result is not None:
+    if train_result is not None and test_result is not None:
         meta["test_num_tracklets"] = test_result["num_tracklets"]
         meta["test_num_frames_source_range"] = test_result.get("num_frames_source_range", test_result["num_frames_original"])
         meta["test_num_frames_after_metadata_filter"] = test_result.get(
@@ -478,8 +486,6 @@ def main():
         write_jsonl(output / "vcm_test_frames.jsonl", test_result["frames"])
 
     copy_results = [result for result in (train_result, test_result) if result is not None]
-    if train_result is None:
-        train_result = test_result
     copy_info = None
     if args.copy_subset:
         subset_root = Path(args.subset_root).resolve() if args.subset_root else root.parent / "{}-subset".format(root.name)

@@ -103,6 +103,7 @@ def _filter_frames_by_metadata(frames, pid, camid, modality, strict=True):
         if metadata is None:
             if strict:
                 raise ValueError("Cannot parse VCM frame metadata: {}".format(frame_path))
+            filtered.append(frame_path)
             continue
         if (
             metadata["pid"] == int(pid)

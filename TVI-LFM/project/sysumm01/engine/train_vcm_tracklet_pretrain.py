@@ -267,6 +267,7 @@ def main():
             cm_neg_meter = AverageMeter()
             cm_gap_meter = AverageMeter()
             start_time = time.time()
+            epoch_lr = optimizer.param_groups[0]["lr"]
             print("[Epoch {:03d}/{:03d}] start ({} batches)".format(epoch, config["train"]["epochs"], len(loader)), flush=True)
 
             for step, batch in enumerate(loader, start=1):
@@ -355,10 +356,9 @@ def main():
                         flush=True,
                     )
 
-            scheduler.step()
             row = {
                 "epoch": epoch,
-                "lr": optimizer.param_groups[0]["lr"],
+                "lr": epoch_lr,
                 "train_loss": total_meter.avg,
                 "id_loss": id_meter.avg,
                 "cm_contrast_loss": cm_contrast_meter.avg,
@@ -371,6 +371,7 @@ def main():
             }
             append_metrics_row(os.path.join(output_dir, "history.csv"), fieldnames, row)
             print("[Epoch {:03d}/{:03d}] summary {}".format(epoch, config["train"]["epochs"], row), flush=True)
+            scheduler.step()
             state = {
                 "epoch": epoch,
                 "model": model.state_dict(),

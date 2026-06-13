@@ -1,4 +1,5 @@
 import argparse
+import copy
 import sys
 from pathlib import Path
 
@@ -28,6 +29,15 @@ def _infer_num_classes(config, state_dict):
     for key in classifier_keys:
         if key in state_dict:
             return int(state_dict[key].shape[0])
+    for key, value in state_dict.items():
+        if (
+            key.endswith("classifier.weight")
+            and "part_classifier" not in key
+            and "modality_classifier" not in key
+            and hasattr(value, "shape")
+            and len(value.shape) == 2
+        ):
+            return int(value.shape[0])
     if "dataset" in config and "num_classes" in config["dataset"]:
         return int(config["dataset"]["num_classes"])
     raise KeyError("Cannot infer num_classes: missing classifier.weight in checkpoint and dataset.num_classes in config")
@@ -50,6 +60,28 @@ def _get_schp_eval_kwargs(config):
     }
 
 
+def _get_final_seed(config):
+    return int(config.get("eval", {}).get("final_seed", 0))
+
+
+def _strip_eval_initializers(model_config):
+    model_config = copy.deepcopy(model_config)
+
+    def visit(node):
+        if isinstance(node, dict):
+            for key, value in list(node.items()):
+                if key in ("pretrained_path", "init_checkpoint", "rgb_init_checkpoint", "ir_init_checkpoint"):
+                    node[key] = None
+                else:
+                    visit(value)
+        elif isinstance(node, list):
+            for item in node:
+                visit(item)
+
+    visit(model_config)
+    return model_config
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate SYSU-MM01 experiment")
     parser.add_argument("--config", required=True)
@@ -70,7 +102,7 @@ def main():
 
     checkpoint = torch.load(args.checkpoint, map_location="cpu")
     state_dict = strip_prefix_if_present(_extract_model_state_dict(checkpoint), "module.")
-    model = build_reid_model(config["model"], num_classes=_infer_num_classes(config, state_dict))
+    model = build_reid_model(_strip_eval_initializers(config["model"]), num_classes=_infer_num_classes(config, state_dict))
     model.load_state_dict(state_dict, strict=True)
     model.to(device)
 
@@ -83,7 +115,7 @@ def main():
         device=device,
         mode=args.mode,
         num_trials=args.num_trials or config["eval"]["num_trials"],
-        seed=config["seed"],
+        seed=_get_final_seed(config),
         protocol=config["eval"].get("protocol", "cross_modality"),
         modality=config["eval"].get("modality"),
         id_split=args.id_split,

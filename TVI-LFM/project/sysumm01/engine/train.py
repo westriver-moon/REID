@@ -1,4 +1,5 @@
 import argparse
+import copy
 import math
 import os
 import sys
@@ -267,6 +268,63 @@ def _extract_model_state_dict(checkpoint):
     for prefix in ("module.",):
         state_dict = strip_prefix_if_present(state_dict, prefix)
     return state_dict
+
+
+def _infer_num_classes(config, state_dict):
+    for key in ("classifier.weight", "module.classifier.weight"):
+        if key in state_dict:
+            return int(state_dict[key].shape[0])
+    for key, value in state_dict.items():
+        if (
+            key.endswith("classifier.weight")
+            and "part_classifier" not in key
+            and "modality_classifier" not in key
+            and hasattr(value, "shape")
+            and len(value.shape) == 2
+        ):
+            return int(value.shape[0])
+    if "num_classes" in config.get("dataset", {}):
+        return int(config["dataset"]["num_classes"])
+    raise KeyError("Cannot infer num_classes from checkpoint classifier or dataset.num_classes")
+
+
+def get_eval_dataset_root(config):
+    dataset_root = config.get("eval", {}).get("dataset_root") or config.get("dataset", {}).get("root")
+    if not dataset_root:
+        raise KeyError("Evaluation requires eval.dataset_root or dataset.root")
+    return dataset_root
+
+
+def get_final_seed(config):
+    return int(config.get("eval", {}).get("final_seed", 0))
+
+
+def strip_eval_initializers(model_config):
+    model_config = copy.deepcopy(model_config)
+
+    def visit(node):
+        if isinstance(node, dict):
+            for key, value in list(node.items()):
+                if key in ("pretrained_path", "init_checkpoint", "rgb_init_checkpoint", "ir_init_checkpoint"):
+                    node[key] = None
+                else:
+                    visit(value)
+        elif isinstance(node, list):
+            for item in node:
+                visit(item)
+
+    visit(model_config)
+    return model_config
+
+
+def build_eval_model(config, checkpoint_path, device):
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    state_dict = _extract_model_state_dict(checkpoint)
+    model_config = strip_eval_initializers(config["model"])
+    model = build_reid_model(model_config=model_config, num_classes=_infer_num_classes(config, state_dict))
+    model.load_state_dict(state_dict, strict=True)
+    model.to(device)
+    return model
 
 
 def initialize_model_weights(model, checkpoint_path, init_config=None):
@@ -837,14 +895,14 @@ def evaluate_topk_checkpoints(model, config, output_dir, device, top_records):
         for eval_mode in get_final_eval_modes(config):
             metrics, retrievals = evaluate_sysu(
                 model=model,
-                dataset_root=config["eval"].get("dataset_root", config["dataset"].get("root")),
+                dataset_root=get_eval_dataset_root(config),
                 image_size=tuple(config["dataset"]["image_size"]),
                 batch_size=config["eval"]["batch_size"],
                 num_workers=config["eval"]["num_workers"],
                 device=device,
                 mode=eval_mode,
                 num_trials=config["eval"]["num_trials"],
-                seed=config["seed"],
+                seed=get_final_seed(config),
                 protocol=config["eval"].get("protocol", "cross_modality"),
                 modality=config["eval"].get("modality"),
                 id_split=config["eval"].get("final_split", "test"),
@@ -862,6 +920,33 @@ def evaluate_topk_checkpoints(model, config, output_dir, device, top_records):
             )
         summary.append(epoch_payload)
     dump_json(summary, os.path.join(eval_dir, "summary.json"))
+
+
+def run_eval_only(config, args, output_dir, device):
+    checkpoint_path = args.checkpoint or args.resume
+    if not checkpoint_path:
+        raise ValueError("--checkpoint or --resume is required with --eval-only")
+    model = build_eval_model(config, checkpoint_path, device)
+    for eval_mode in get_final_eval_modes(config):
+        metrics, retrievals = evaluate_sysu(
+            model=model,
+            dataset_root=get_eval_dataset_root(config),
+            image_size=tuple(config["dataset"]["image_size"]),
+            batch_size=config["eval"]["batch_size"],
+            num_workers=config["eval"]["num_workers"],
+            device=device,
+            mode=eval_mode,
+            num_trials=config["eval"]["num_trials"],
+            seed=get_final_seed(config),
+            protocol=config["eval"].get("protocol", "cross_modality"),
+            modality=config["eval"].get("modality"),
+            id_split=config["eval"].get("id_split", config["eval"].get("final_split", "test")),
+            **get_schp_eval_kwargs(config),
+        )
+        dump_json(
+            {"metrics": metrics, "retrieval_examples": retrievals},
+            os.path.join(output_dir, "eval_{}_final.json".format(eval_mode)),
+        )
 
 
 def main():
@@ -885,6 +970,11 @@ def main():
 
         set_seed(config["seed"])
         device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+        if args.eval_only:
+            print("Running eval-only from {}".format(args.checkpoint or args.resume), flush=True)
+            run_eval_only(config, args, output_dir, device)
+            return
+
         leakage_changes = guard_sysu_validation_leakage(config)
         if leakage_changes:
             print(
@@ -1081,34 +1171,6 @@ def main():
                 ),
                 flush=True,
             )
-            return
-
-        if args.eval_only:
-            ckpt_path = args.checkpoint or args.resume
-            if not ckpt_path:
-                raise ValueError("--checkpoint or --resume is required with --eval-only")
-            checkpoint = torch.load(ckpt_path, map_location="cpu")
-            model.load_state_dict(checkpoint["model"], strict=True)
-            for eval_mode in get_final_eval_modes(config):
-                metrics, retrievals = evaluate_sysu(
-                    model=model,
-                    dataset_root=config["eval"].get("dataset_root", config["dataset"].get("root")),
-                    image_size=tuple(config["dataset"]["image_size"]),
-                    batch_size=config["eval"]["batch_size"],
-                    num_workers=config["eval"]["num_workers"],
-                    device=device,
-                    mode=eval_mode,
-                    num_trials=config["eval"]["num_trials"],
-                    seed=config["seed"],
-                    protocol=config["eval"].get("protocol", "cross_modality"),
-                    modality=config["eval"].get("modality"),
-                    id_split=config["eval"].get("id_split", config["eval"].get("final_split", "test")),
-                    **get_schp_eval_kwargs(config),
-                    )
-                dump_json(
-                    {"metrics": metrics, "retrieval_examples": retrievals},
-                    os.path.join(output_dir, "eval_{}_final.json".format(eval_mode)),
-                )
             return
 
         fieldnames = [
@@ -1349,31 +1411,34 @@ def main():
             if is_best:
                 save_checkpoint(state, os.path.join(output_dir, "checkpoints", "best.pth"))
 
-        best_checkpoint = os.path.join(output_dir, "checkpoints", "best.pth")
-        checkpoint = torch.load(best_checkpoint, map_location="cpu")
-        model.load_state_dict(checkpoint["model"], strict=True)
-        for eval_mode in get_final_eval_modes(config):
-            metrics, retrievals = evaluate_sysu(
-                model=model,
-                dataset_root=config["eval"].get("dataset_root", config["dataset"].get("root")),
-                image_size=tuple(config["dataset"]["image_size"]),
-                batch_size=config["eval"]["batch_size"],
-                num_workers=config["eval"]["num_workers"],
-                device=device,
-                mode=eval_mode,
-                num_trials=config["eval"]["num_trials"],
-                seed=config["seed"],
-                protocol=config["eval"].get("protocol", "cross_modality"),
-                modality=config["eval"].get("modality"),
-                id_split=config["eval"].get("final_split", "test"),
-                **get_schp_eval_kwargs(config),
-            )
-            dump_json(
-                {"metrics": metrics, "retrieval_examples": retrievals},
-                os.path.join(output_dir, "eval_{}_final.json".format(eval_mode)),
-            )
-        if config["train"].get("final_eval_top_k", False):
-            evaluate_topk_checkpoints(model, config, output_dir, device, top_records)
+        if config["eval"].get("run_final_test", True):
+            best_checkpoint = os.path.join(output_dir, "checkpoints", "best.pth")
+            checkpoint = torch.load(best_checkpoint, map_location="cpu")
+            model.load_state_dict(checkpoint["model"], strict=True)
+            for eval_mode in get_final_eval_modes(config):
+                metrics, retrievals = evaluate_sysu(
+                    model=model,
+                    dataset_root=get_eval_dataset_root(config),
+                    image_size=tuple(config["dataset"]["image_size"]),
+                    batch_size=config["eval"]["batch_size"],
+                    num_workers=config["eval"]["num_workers"],
+                    device=device,
+                    mode=eval_mode,
+                    num_trials=config["eval"]["num_trials"],
+                    seed=get_final_seed(config),
+                    protocol=config["eval"].get("protocol", "cross_modality"),
+                    modality=config["eval"].get("modality"),
+                    id_split=config["eval"].get("final_split", "test"),
+                    **get_schp_eval_kwargs(config),
+                )
+                dump_json(
+                    {"metrics": metrics, "retrieval_examples": retrievals},
+                    os.path.join(output_dir, "eval_{}_final.json".format(eval_mode)),
+                )
+            if config["train"].get("final_eval_top_k", False):
+                evaluate_topk_checkpoints(model, config, output_dir, device, top_records)
+        else:
+            print("Skipping final test evaluation because eval.run_final_test=false", flush=True)
     finally:
         sys.stdout.flush()
         sys.stderr.flush()
