@@ -52,6 +52,44 @@ def _filter_existing_frames(root, frames):
     return existing, missing
 
 
+def _parse_vcm_frame_metadata(frame_path):
+    parts = frame_path.replace("\\", "/").split("/")
+    lowered = [part.lower() for part in parts]
+    if "data" not in lowered:
+        return None
+    data_index = lowered.index("data")
+    if len(parts) <= data_index + 3:
+        return None
+    modality = parts[data_index + 2].lower()
+    camera_text = parts[data_index + 3]
+    if modality not in ("rgb", "ir") or not camera_text.lower().startswith("d"):
+        return None
+    try:
+        return {
+            "pid": int(parts[data_index + 1]),
+            "modality": modality,
+            "camid": int(camera_text[1:]),
+        }
+    except ValueError:
+        return None
+
+
+def _filter_frames_by_metadata(frames, pid, camid, modality):
+    filtered = []
+    for frame_path in frames:
+        metadata = _parse_vcm_frame_metadata(frame_path)
+        if metadata is None:
+            filtered.append(frame_path)
+            continue
+        if (
+            metadata["pid"] == int(pid)
+            and metadata["camid"] == int(camid)
+            and metadata["modality"] == modality
+        ):
+            filtered.append(frame_path)
+    return filtered
+
+
 def _sample(indices, count, rng):
     if len(indices) >= count:
         return rng.sample(indices, count)
@@ -132,6 +170,12 @@ class VCMTrackletDataset(Dataset):
             if not frames:
                 continue
             frames, missing_count = _filter_existing_frames(root, list(frames))
+            frames = _filter_frames_by_metadata(
+                frames,
+                pid=int(item["pid"]),
+                camid=int(item["camid"]),
+                modality=modality,
+            )
             missing_frame_count += missing_count
             if not frames:
                 dropped_tracklet_count += 1
@@ -422,6 +466,12 @@ class SYSUIRVCMIRDataset(Dataset):
             if not frames:
                 continue
             frames, missing_count = _filter_existing_frames(vcm_root, list(frames))
+            frames = _filter_frames_by_metadata(
+                frames,
+                pid=int(item["pid"]),
+                camid=int(item["camid"]),
+                modality="ir",
+            )
             missing_frame_count += missing_count
             if not frames:
                 dropped_tracklet_count += 1

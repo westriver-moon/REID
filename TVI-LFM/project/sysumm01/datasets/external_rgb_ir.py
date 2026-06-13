@@ -46,12 +46,50 @@ def _infer_modality_from_frames(default_modality, frames):
     return default_modality
 
 
+def _parse_vcm_frame_metadata(frame_path):
+    parts = frame_path.replace("\\", "/").split("/")
+    lowered = [part.lower() for part in parts]
+    if "data" not in lowered:
+        return None
+    data_index = lowered.index("data")
+    if len(parts) <= data_index + 3:
+        return None
+    modality = parts[data_index + 2].lower()
+    camera_text = parts[data_index + 3]
+    if modality not in ("rgb", "ir") or not camera_text.lower().startswith("d"):
+        return None
+    try:
+        return {
+            "pid": int(parts[data_index + 1]),
+            "modality": modality,
+            "camid": int(camera_text[1:]),
+        }
+    except ValueError:
+        return None
+
+
+def _filter_frames_by_metadata(frames, pid, camid, modality):
+    filtered = []
+    for frame_path in frames:
+        metadata = _parse_vcm_frame_metadata(frame_path)
+        if metadata is None:
+            filtered.append(frame_path)
+            continue
+        if (
+            metadata["pid"] == int(pid)
+            and metadata["camid"] == int(camid)
+            and metadata["modality"] == modality
+        ):
+            filtered.append(frame_path)
+    return filtered
+
+
 class ExternalRGBIRDataset(Dataset):
-    """VCM tracklets + LLCM images for external RGB-IR pretraining.
+    """External RGB-IR pretraining data with image or tracklet indices.
 
     The dataset keeps source-local identities separate by remapping each
-    source's pids into a global contiguous label space. VCM remains a tracklet
-    sample and is flattened by collate_external_rgb_ir after sampling K frames.
+    source's pids into a global contiguous label space. Tracklet samples are
+    flattened by collate_external_rgb_ir after sampling K frames.
     """
 
     def __init__(
@@ -170,6 +208,17 @@ class ExternalRGBIRDataset(Dataset):
             for raw in payload["tracklets"]:
                 frames = list(raw.get("frames") or raw.get("frame_paths") or [])
                 frames = [frame for frame in frames if os.path.isfile(_resolve_path(root, frame))]
+                modality = str(raw["modality"]).lower()
+                if modality == "visible":
+                    modality = "rgb"
+                if modality == "nir":
+                    modality = "ir"
+                frames = _filter_frames_by_metadata(
+                    frames,
+                    pid=int(raw["pid"]),
+                    camid=int(raw["camid"]),
+                    modality=modality,
+                )
                 if not frames:
                     continue
                 items.append(
@@ -178,7 +227,7 @@ class ExternalRGBIRDataset(Dataset):
                         "tracklet_id": raw.get("tracklet_id", len(items)),
                         "pid": int(raw["pid"]),
                         "camid": int(raw["camid"]),
-                        "modality": _infer_modality_from_frames(str(raw["modality"]).lower(), frames),
+                        "modality": _infer_modality_from_frames(modality, frames),
                         "frames": frames,
                     }
                 )

@@ -112,6 +112,53 @@ def infer_modality(frame_path):
     raise ValueError("Unable to infer modality from frame path: {}".format(frame_path))
 
 
+def parse_frame_metadata(frame_path):
+    parts = Path(frame_path.replace("\\", "/")).parts
+    lowered = [part.lower() for part in parts]
+    if "data" in lowered:
+        data_index = lowered.index("data")
+        if len(parts) > data_index + 3:
+            try:
+                pid = int(parts[data_index + 1])
+                modality = parts[data_index + 2].lower()
+                camera_text = parts[data_index + 3]
+                if modality in ("rgb", "ir") and camera_text.lower().startswith("d"):
+                    return {
+                        "pid": pid,
+                        "modality": modality,
+                        "camid": int(camera_text[1:]),
+                    }
+            except ValueError:
+                pass
+    match = VCM_FRAME_RE.match(Path(frame_path).name)
+    if match:
+        return {
+            "pid": int(match.group("pid")),
+            "modality": modality_from_code(match.group("modality")),
+            "camid": int(match.group("camera")),
+        }
+    return None
+
+
+def filter_frames_by_track_metadata(frames, pid, camid, modality):
+    filtered = []
+    dropped = 0
+    for frame_path in frames:
+        metadata = parse_frame_metadata(frame_path)
+        if metadata is None:
+            filtered.append(frame_path)
+            continue
+        if (
+            metadata["pid"] == int(pid)
+            and metadata["camid"] == int(camid)
+            and metadata["modality"] == modality
+        ):
+            filtered.append(frame_path)
+        else:
+            dropped += 1
+    return filtered, dropped
+
+
 def make_relative_to_root(root, path_text):
     path_text = path_text.replace("\\", "/")
     if os.path.isabs(path_text):
@@ -167,6 +214,7 @@ def build_split(root, split, name_file, info_file, max_frames, sampling, seed):
     frames_jsonl = []
     original_frame_count = 0
     limited_frame_count = 0
+    metadata_filtered_frame_count = 0
 
     for tracklet_id, (start, end, pid, camid, extra, modality_code) in enumerate(parsed):
         begin = start - 1 if one_based else start
@@ -182,6 +230,24 @@ def build_split(root, split, name_file, info_file, max_frames, sampling, seed):
                 )
             )
         original_frames = frame_names[begin:finish]
+        modality = modality_from_code(modality_code) if modality_code is not None else infer_modality(original_frames[0])
+        original_frames, dropped_by_metadata = filter_frames_by_track_metadata(
+            original_frames,
+            pid=pid,
+            camid=camid,
+            modality=modality,
+        )
+        metadata_filtered_frame_count += dropped_by_metadata
+        if not original_frames:
+            raise ValueError(
+                "No frames remain after metadata filtering for {} tracklet {}: pid={} camid={} modality={}".format(
+                    split,
+                    tracklet_id,
+                    pid,
+                    camid,
+                    modality,
+                )
+            )
         selected_frames = select_frames(
             original_frames,
             max_frames=max_frames,
@@ -189,7 +255,6 @@ def build_split(root, split, name_file, info_file, max_frames, sampling, seed):
             seed=seed,
             tracklet_id=tracklet_id,
         )
-        modality = modality_from_code(modality_code) if modality_code is not None else infer_modality(selected_frames[0])
         original_frame_count += len(original_frames)
         limited_frame_count += len(selected_frames)
         tracklet = {
@@ -229,6 +294,7 @@ def build_split(root, split, name_file, info_file, max_frames, sampling, seed):
             "track_info_file": str(info_file),
             "index_base": 1 if one_based else 0,
             "num_frames_in_name_file": len(frame_names),
+            "metadata_filtered_frames": metadata_filtered_frame_count,
         },
         "tracklets": tracklets,
         "frames": frames_jsonl,
