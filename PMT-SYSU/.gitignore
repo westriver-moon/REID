@@ -1,0 +1,7 @@
+pretrained/*.pth
+outputs/
+third_party/
+external/
+__pycache__/
+.pytest_cache/
+*.pyc

@@ -8,6 +8,7 @@ CODEX_PROXY_TIMEOUT="${CODEX_PROXY_TIMEOUT:-2}"
 CODEX_PROXY_TMPDIR="${CODEX_PROXY_TMPDIR:-/home/cgv841/ybj/codex-local/tmp}"
 CODEX_PROXY_NO_PROXY="${CODEX_PROXY_NO_PROXY:-localhost,127.0.0.1,::1}"
 CODEX_IPC_DIR="${CODEX_IPC_DIR:-/home/cgv841/ybj/codex-local/tmp/codex-ipc}"
+CODEX_PROXY_REQUIRE_PORT="${CODEX_PROXY_REQUIRE_PORT:-0}"
 
 codex_proxy_url() {
   printf '%s://%s:%s\n' "${CODEX_PROXY_SCHEME}" "${CODEX_PROXY_HOST}" "${CODEX_PROXY_PORT}"
@@ -28,7 +29,7 @@ codex_proxy_apply() {
 
   proxy_url="$(codex_proxy_url)"
 
-  if codex_proxy_port_open; then
+  if [ "${CODEX_PROXY_REQUIRE_PORT}" != "1" ] || codex_proxy_port_open; then
     export ALL_PROXY="${proxy_url}"
     export HTTPS_PROXY="${proxy_url}"
     export HTTP_PROXY="${proxy_url}"

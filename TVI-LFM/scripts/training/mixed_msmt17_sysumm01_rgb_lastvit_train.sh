@@ -4,7 +4,8 @@ cd "$(dirname "$0")/../.."
 
 gpu_id="${1:-0}"
 msmt_root="${MSMT17_ROOT:-/home/cgv841/datasets/MSMT17_V1}"
-output="${OUTPUT_DIR:-logs/mixed_msmt17_sysumm01/rgb_lastvit_ep40}"
+run_date="$(date +%F)"
+output="${OUTPUT_DIR:-logs/mixed_msmt17_sysumm01/rgb_lastvit_ep40_${run_date}}"
 config="project/sysumm01/configs/mixed_msmt17_sysumm01_rgb_lastvit.yaml"
 
 python - <<PY

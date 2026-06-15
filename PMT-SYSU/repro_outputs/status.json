@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-06-15",
+  "user_language": "zh-CN",
+  "target_repo": "/home/cgv841/ybj/PMT-SYSU",
+  "readme_first": true,
+  "selected_goal": "Implement and validate an independent PMT SYSU-MM01 reproduction baseline",
+  "goal_priority": "implementation plus smoke verification",
+  "status": "partial",
+  "documented_command_status": "smoke_verified",
+  "documented_command_kind": "training_startup_and_evaluation_smoke",
+  "patches_applied": true,
+  "readme_fidelity": "preserved with engineering compatibility adaptations",
+  "highest_patch_risk": "medium",
+  "evidence_level": "direct",
+  "assumptions": [
+    "The local SYSU-MM01 cache under /home/cgv841/datasets/SYSU-MM01 is the intended SYSU dataset root.",
+    "The user wanted the PMT baseline outside TVI-LFM, so the requested TVI-LFM/project/pmt_sysu path was adapted to PMT-SYSU."
+  ],
+  "protocol_deviations": [
+    "The implementation directory is PMT-SYSU instead of TVI-LFM/project/pmt_sysu due to the user's latest instruction.",
+    "Only one official checkpoint trial was executed during this turn; full 10-trial evaluation remains available as a command."
+  ],
+  "human_decisions_required": [
+    "Whether to launch full 24-epoch PMT training.",
+    "Whether to run full official checkpoint 10-trial evaluation now."
+  ],
+  "next_safe_action": "Run the full 10-trial official checkpoint evaluation or launch 24-epoch training after user confirmation.",
+  "outputs": [
+    "repro_outputs/SUMMARY.md",
+    "repro_outputs/COMMANDS.md",
+    "repro_outputs/LOG.md",
+    "repro_outputs/SCIENTIFIC_CHANGELOG.md",
+    "repro_outputs/COMPARABILITY_REPORT.md",
+    "repro_outputs/status.json"
+  ]
+}
+
