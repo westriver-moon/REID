@@ -13,24 +13,31 @@ from pmt_sysu.model import build_pmt_model
 from pmt_sysu.utils.checkpoint import load_model_weights
 
 
-def tiny_config():
+def tiny_config(multibranch=False):
+    model = {
+        "num_classes": 4,
+        "embed_dim": 32,
+        "patch_size": [8, 8],
+        "stride_size": [8, 8],
+        "depth": 1,
+        "num_heads": 4,
+        "mlp_ratio": 2.0,
+        "dropout": 0.0,
+        "attention_dropout": 0.0,
+        "drop_path": 0.0,
+    }
+    if multibranch:
+        model["patch_embed"] = {
+            "anchor_branch": 0,
+            "branches": [
+                {"patch_size": [8, 8], "stride_size": [8, 8]},
+                {"patch_size": [8, 4], "stride_size": [8, 4]},
+            ],
+        }
     return Config(
         {
             "data": Config({"height": 32, "width": 16, "batch_size_per_modality": 8, "num_pos": 2}),
-            "model": Config(
-                {
-                    "num_classes": 4,
-                    "embed_dim": 32,
-                    "patch_size": [8, 8],
-                    "stride_size": [8, 8],
-                    "depth": 1,
-                    "num_heads": 4,
-                    "mlp_ratio": 2.0,
-                    "dropout": 0.0,
-                    "attention_dropout": 0.0,
-                    "drop_path": 0.0,
-                }
-            ),
+            "model": Config(model),
             "train": Config({"progressive_epoch": 6, "triplet_margin": 0.1, "msel_weight": 0.5, "dcl_weight": 0.5}),
         }
     )
@@ -60,6 +67,31 @@ def test_model_output_shape():
     model.eval()
     emb = model(torch.randn(16, 3, 32, 16))
     assert emb.shape == (16, 32)
+
+
+def test_multibranch_model_output_shape():
+    config = tiny_config(multibranch=True)
+    model = build_pmt_model(config)
+    model.train()
+    out = model(torch.randn(16, 3, 32, 16), return_dict=True)
+    assert out["features"].shape == (16, 32)
+    assert out["logits"].shape == (16, 4)
+    assert model.base.patch_embed.num_patches == 8
+
+
+def test_multibranch_loads_single_patch_pretrained():
+    baseline = build_pmt_model(tiny_config())
+    config = tiny_config(multibranch=True)
+    model = build_pmt_model(config)
+    with tempfile.NamedTemporaryFile(suffix=".pth") as handle:
+        torch.save({"model": baseline.base.state_dict()}, handle.name)
+        result = model.base.load_pretrained(handle.name, logger=lambda _message: None)
+    branch0 = model.base.patch_embed.proj[0].weight
+    branch1 = model.base.patch_embed.proj[1].weight
+    assert torch.allclose(branch0, baseline.base.patch_embed.proj.weight)
+    assert branch1.shape[-2:] == (8, 4)
+    assert model.base.patch_embed.fuse.weight[:, :32].abs().sum() > 0
+    assert len(result.unexpected_keys) == 0
 
 
 def test_msel_finite():
@@ -130,4 +162,3 @@ def test_official_checkpoint_key_conversion():
         torch.save(state, handle.name)
         result = load_model_weights(model, handle.name, strict=False)
     assert len(result.unexpected_keys) == 0
-

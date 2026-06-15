@@ -33,7 +33,7 @@ def make_optimizer(config, model):
         if "bias" in key:
             lr *= float(config.train.bias_lr_factor)
             weight_decay = float(config.train.bias_weight_decay)
-        if "base.patch_embed.proj" in key or "base.blocks." in key:
+        if key.startswith("base.patch_embed.") or "base.blocks." in key:
             lr *= float(config.train.backbone_lr_factor)
         params.append({"params": [value], "lr": lr, "initial_lr": lr, "weight_decay": weight_decay, "name": key})
     return torch.optim.AdamW(params, lr=float(config.train.base_lr), weight_decay=float(config.train.weight_decay))

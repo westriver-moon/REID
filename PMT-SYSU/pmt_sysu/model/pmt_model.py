@@ -57,6 +57,7 @@ class PMTModel(nn.Module):
             drop_rate=float(config.model.dropout),
             attn_drop_rate=float(config.model.attention_dropout),
             drop_path_rate=float(config.model.drop_path),
+            patch_embed_config=config.model.get("patch_embed"),
         )
         self.num_classes = int(num_classes)
         self.classifier = nn.Linear(self.in_planes, self.num_classes, bias=False)
@@ -85,4 +86,3 @@ class PMTModel(nn.Module):
 
 def build_pmt_model(config, num_classes: int | None = None):
     return PMTModel(config, num_classes or int(config.model.num_classes))
-

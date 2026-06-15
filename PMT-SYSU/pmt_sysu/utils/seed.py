@@ -34,7 +34,6 @@ def set_random_state(state: dict) -> None:
     if "numpy_random_state" in state:
         np.random.set_state(state["numpy_random_state"])
     if "torch_random_state" in state:
-        torch.set_rng_state(state["torch_random_state"])
+        torch.set_rng_state(state["torch_random_state"].detach().cpu().byte())
     if torch.cuda.is_available() and "cuda_random_state" in state:
-        torch.cuda.set_rng_state_all(state["cuda_random_state"])
-
+        torch.cuda.set_rng_state_all([item.detach().cpu().byte() for item in state["cuda_random_state"]])

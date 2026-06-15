@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-06-15",
+  "target_repo": "/home/cgv841/ybj/PMT-SYSU",
+  "goal": "Implement and startup-verify PMT-MBPatch architecture variant",
+  "status": "full_training_running",
+  "run_mode": "full_kickoff",
+  "config": "pmt_sysu/config/sysu_pmt_mbpatch.yaml",
+  "dataset": "/home/cgv841/datasets/SYSU-MM01",
+  "pretrained": "pretrained/jx_vit_base_p16_224-80ecf9dd.pth",
+  "pid": 3094254,
+  "tmux_session": "pmt_mbpatch_full",
+  "started_at": "2026-06-15 20:39:07 Asia/Shanghai",
+  "resumed_in_tmux_at": "2026-06-15 20:52:14 Asia/Shanghai",
+  "max_steps": 16704,
+  "completed_steps": 696,
+  "best_metric": null,
+  "best_checkpoint": null,
+  "stop_reason": null,
+  "tests": {
+    "compileall": "passed",
+    "pytest": "9 passed",
+    "preflight": "passed",
+    "epoch1_smoke": "passed",
+    "epoch7_smoke": "passed",
+    "full_training": "running in tmux; resumed at epoch 3"
+  },
+  "outputs": [
+    "outputs/pmt_sysu/mbpatch_smoke_ep1",
+    "outputs/pmt_sysu/mbpatch_smoke_ep7",
+    "outputs/pmt_sysu/mbpatch_reproduction"
+  ],
+  "next_safe_action": "Monitor tmux session pmt_mbpatch_full, then run 10-trial SYSU evaluation on best.pth after epoch 24 completes."
+}

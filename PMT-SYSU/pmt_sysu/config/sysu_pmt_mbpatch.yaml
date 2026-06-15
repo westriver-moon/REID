@@ -1,0 +1,61 @@
+seed: 0
+
+data:
+  root: /home/cgv841/datasets/SYSU-MM01
+  height: 256
+  width: 128
+  num_workers: 8
+  batch_size_per_modality: 32
+  num_pos: 4
+
+model:
+  num_classes: 395
+  embed_dim: 768
+  patch_size: [16, 16]
+  stride_size: [12, 12]
+  patch_embed:
+    anchor_branch: 0
+    branches:
+      - patch_size: [16, 16]
+        stride_size: [12, 12]
+      - patch_size: [16, 8]
+        stride_size: [12, 6]
+  depth: 12
+  num_heads: 12
+  mlp_ratio: 4.0
+  dropout: 0.03
+  attention_dropout: 0.0
+  drop_path: 0.1
+  pretrained: pretrained/jx_vit_base_p16_224-80ecf9dd.pth
+
+train:
+  start_epoch: 1
+  max_epoch: 24
+  progressive_epoch: 6
+  triplet_margin: 0.1
+  msel_weight: 0.5
+  dcl_weight: 0.5
+  optimizer: AdamW
+  base_lr: 0.0003
+  backbone_lr_factor: 0.5
+  weight_decay: 0.0001
+  bias_weight_decay: 0.0001
+  bias_lr_factor: 1.0
+  warmup_epochs: 3
+  warmup_factor: 0.01
+  min_lr_factor: 0.01
+  amp: true
+  eval_interval: 2
+  save_interval: 2
+  log_interval: 32
+
+test:
+  mode: all
+  gallery_mode: single
+  trials: 10
+  batch_size: 128
+  num_workers: 8
+
+output:
+  root: outputs/pmt_sysu/mbpatch_reproduction
+

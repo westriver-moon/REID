@@ -113,6 +113,29 @@ python -m pmt_sysu.train \
   --device cuda:0
 ```
 
+## PMT-MBPatch Variant
+
+`pmt_sysu/config/sysu_pmt_mbpatch.yaml` keeps the PMT SYSU data, losses, training schedule, and evaluation protocol unchanged, but replaces the single overlapping patch embedding with a two-branch patch embedding:
+
+```text
+[16,16] stride [12,12]
+[16,8]  stride [12,6]
+```
+
+The first branch is the anchor branch, so the token count remains compatible with the original PMT transformer and losses. ImageNet single-branch patch weights are copied into the anchor branch and resized for the added branch; the 1x1 fusion starts as an anchor-branch identity.
+
+Startup smoke command:
+
+```bash
+python -m pmt_sysu.train \
+  --config pmt_sysu/config/sysu_pmt_mbpatch.yaml \
+  --data-root /home/cgv841/datasets/SYSU-MM01 \
+  --pretrained pretrained/jx_vit_base_p16_224-80ecf9dd.pth \
+  --output outputs/pmt_sysu/mbpatch_smoke \
+  --device cuda:0 \
+  --smoke-batches 1
+```
+
 ## Test
 
 Self-trained best checkpoint:
@@ -173,4 +196,3 @@ Compared with the official PMT code, this independent version only changes engin
 - runtime assertions check PMT batch layout and finite losses.
 
 The PMT model, two-stage training schedule, PK sampling layout, MSEL/DCL logic, and SYSU evaluation protocol are preserved.
-
