@@ -28,67 +28,16 @@ best_mINP_ir = 0
 best_mAP_fusion = 0
 best_rank1_fusion = 0
 best_mINP_fusion = 0
-
-
-def _format_eval_table(results_by_mode, method_name, venue_name):
-    mode_alias = {'all': 'All Search', 'indoor': 'Indoor Search'}
-    lines = ["Search\tMethods\tVenue\tType\tR-1\tmAP\tmINP"]
-    for search_mode in ['all', 'indoor']:
-        if search_mode not in results_by_mode:
-            continue
-        for metric_type, (mINP, mAP, cmc) in results_by_mode[search_mode].items():
-            lines.append(
-                f"{mode_alias.get(search_mode, search_mode)}\t{method_name}\t{venue_name}\t{metric_type}\t{cmc[0]:.2%}\t{mAP:.2%}\t{mINP:.2%}"
-            )
-    return '\n'.join(lines)
 def seed_torch(seed):
     seed = int(seed)
     random.seed(seed)
-    os.environ['PYTHONHASHSEED'] = str(seed)
+    os.environ['PYTHONASHSEED'] = str(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
-
-def _load_train_checkpoint(checkpoint_path, model, optimizer, scheduler, scaler, device):
-    if not os.path.isfile(checkpoint_path):
-        return None
-
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint.get('model_state_dict', checkpoint), strict=False)
-
-    if 'optimizer_state_dict' in checkpoint:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    if 'scheduler_state_dict' in checkpoint:
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-    if 'scaler_state_dict' in checkpoint:
-        scaler.load_state_dict(checkpoint['scaler_state_dict'])
-
-    return int(checkpoint.get('epoch', -1))
-
-
-def _extract_model_state_dict(weight_obj):
-    if isinstance(weight_obj, dict):
-        for key in ('model_state_dict', 'model', 'state_dict'):
-            if key in weight_obj and isinstance(weight_obj[key], dict):
-                return weight_obj[key]
-    return weight_obj
-
-
-def _save_train_checkpoint(checkpoint_path, current_epoch, model, optimizer, scheduler, scaler):
-    torch.save(
-        {
-            'epoch': current_epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_state_dict': scheduler.state_dict(),
-            'scaler_state_dict': scaler.state_dict(),
-        },
-        checkpoint_path,
-    )
 
 
 def main(config):
@@ -182,12 +131,10 @@ def main(config):
 
     print("=================Preparing model=================")
     model = build_model(config)
-    if config.training_weight_init:
-        init_state = _extract_model_state_dict(torch.load(config.training_weight_init, map_location=device))
-        model.load_state_dict(init_state, strict=False)
-        if config.Fix_Visual:
-            model.backup_pool = deepcopy(model.base_model.visual.__getattr__(config.pooling))
-            model.backup_classifier = deepcopy(model.classifier)
+    if config.training_weight_init and config.Fix_Visual:
+        model.load_state_dict(torch.load(config.training_weight_init,map_location=device), strict=False)
+        model.backup_pool = deepcopy(model.base_model.visual.__getattr__(config.pooling))
+        model.backup_classifier = deepcopy(model.classifier)
         print(f"Successfully load model from {config.training_weight_init}")
     model = model.to(device)
 
@@ -195,9 +142,8 @@ def main(config):
         make_dirs(model.output_path)
         make_dirs(model.save_model_path)
         make_dirs(model.save_logs_path)
-        checkpoint_dir = os.path.join(model.output_path, 'checkpoint')
-        make_dirs(checkpoint_dir)
-        checkpoint_latest_path = os.path.join(checkpoint_dir, 'checkpoint_latest.pth')
+        # make_dirs(os.path.join(model.output_path, 'checkpoint/'))
+        # check_point_path = os.path.join(model.output_path, 'checkpoint/checkpoint_latest.pth')
 
         logger = Logger(os.path.join(os.path.join(config.output_path, 'logs/'), 'log.log'))
         logger('\n' * 3)
@@ -215,31 +161,14 @@ def main(config):
         scaler = amp.GradScaler()
             
         start_train_epoch = 0
-        resume_mode = config.test_modality if config.test_modality in ['Fusion', 'IR', 'Text'] else 'Fusion'
-        if config.auto_resume_training_from_lastest_step:
-            resumed_epoch = _load_train_checkpoint(
-                checkpoint_latest_path, model, optimizer, scheduler, scaler, device
-            )
-            if resumed_epoch is not None and resumed_epoch >= 0:
-                start_train_epoch = resumed_epoch + 1
-                print(f"Resuming training from checkpoint epoch {start_train_epoch}")
-            else:
-                start_train_epoch = model.resume_last_model(mode=resume_mode) + 1
-                print(f"Resuming training from model-only epoch {start_train_epoch}")
-        elif config.resume_train_epoch >= 0:
-            checkpoint_epoch_path = os.path.join(
-                checkpoint_dir, f'checkpoint_epoch_{config.resume_train_epoch}.pth'
-            )
-            resumed_epoch = _load_train_checkpoint(
-                checkpoint_epoch_path, model, optimizer, scheduler, scaler, device
-            )
-            if resumed_epoch is not None and resumed_epoch >= 0:
-                start_train_epoch = resumed_epoch + 1
-                print(f"Resuming training from checkpoint epoch {start_train_epoch}")
-            else:
-                model.resume_model(config.resume_train_epoch, mode=resume_mode)
-                start_train_epoch = config.resume_train_epoch + 1
-                print(f"Resuming training from model-only epoch {start_train_epoch}")
+        # if config.auto_resume_training_from_lastest_step:
+        #     checkpoint = torch.load(check_point_path)
+        #     model.load_state_dict(checkpoint['model_state_dict'])
+        #     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        #     scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        #     scaler.load_state_dict(checkpoint['scaler_state_dict'])
+        #     start_train_epoch = checkpoint['epoch'] + 1
+        #     print(f"Resuming training from epoch {start_train_epoch}")
 
         
         for current_epoch in range(start_train_epoch, config.total_train_epoch):
@@ -251,19 +180,6 @@ def main(config):
                 for key, value in zip(*result_vals):
                     loss_writer.add_scalar(key, value, current_epoch)
                 logger('Time: {}; Epoch: {}; {}'.format(time_now(), current_epoch, result))
-
-            _save_train_checkpoint(
-                checkpoint_latest_path, current_epoch, model, optimizer, scheduler, scaler
-            )
-            if (current_epoch + 1) % config.checkpoint_epoch == 0:
-                _save_train_checkpoint(
-                    os.path.join(checkpoint_dir, f'checkpoint_epoch_{current_epoch}.pth'),
-                    current_epoch,
-                    model,
-                    optimizer,
-                    scheduler,
-                    scaler,
-                )
 
             # if current_epoch < config.total_train_epoch and (current_epoch + 1) % config.checkpoint_epoch == 0:
             #     print(f"Saving checkpoint at epoch {current_epoch}")
@@ -277,18 +193,7 @@ def main(config):
 
             # testing while training
             if current_epoch + 1 >= config.eval_start_epoch and (current_epoch + 1) % config.eval_epoch == 0:
-                if config.dataset == 'sysu':
-                    eval_results = {}
-                    for search_mode in ['all', 'indoor']:
-                        eval_config = deepcopy(config)
-                        eval_config.mode = 'test'
-                        eval_config.test_mode = search_mode
-                        eval_loader = Loader(eval_config)
-                        eval_results[search_mode] = test(model, eval_loader, eval_config, device)
-                    result_dict = eval_results['all']
-                    logger(_format_eval_table(eval_results, f"{config.training_mode}|{config.loss_names}", config.dataset.upper()))
-                else:
-                    result_dict = test(model, loaders, config, device)
+                result_dict = test(model, loaders, config, device)
                 if 'IR' in config.test_modality:
                     mINP_ir, mAP_ir, cmc_ir = result_dict['IR']
                     is_best_rank_ir = (cmc_ir[0] >= best_rank1_ir)
@@ -368,22 +273,7 @@ def main(config):
         else:
             model.load_state_dict(torch.load(config.test_model_path,map_location=device), strict=False)
         print('Successfully resume model from {}'.format(config.test_model_path))
-        if config.dataset == 'sysu':
-            eval_results = {}
-            for search_mode in ['all', 'indoor']:
-                eval_config = deepcopy(config)
-                eval_config.mode = 'test'
-                eval_config.test_mode = search_mode
-                eval_loader = Loader(eval_config)
-                eval_results[search_mode] = test(model, eval_loader, eval_config, device)
-            result_dict = eval_results['all']
-            table_text = _format_eval_table(eval_results, f"{config.training_mode}|{config.loss_names}", config.dataset.upper())
-            if config.LOG4TEST:
-                logger(table_text)
-            else:
-                print(table_text)
-        else:
-            result_dict = test(model, loaders, config, device)
+        result_dict = test(model, loaders, config, device)
         if "IR" in config.test_modality:
             mINP_ir, mAP_ir, cmc_ir = result_dict['IR']
             if config.LOG4TEST:

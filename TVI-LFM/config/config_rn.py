@@ -62,7 +62,7 @@ def get_args():
     parser.add_argument('--resume_train_epoch', type=int, default=-1, help='-1 for no resuming')
     parser.add_argument('--auto_resume_training_from_lastest_step', action="store_true", default=False)
     parser.add_argument('--eval_epoch', type=int, default=2)
-    parser.add_argument('--eval_start_epoch', type=int, default=20)
+    parser.add_argument('--eval_start_epoch', type=int, default=80)
     parser.add_argument('--checkpoint_epoch', type=int, default=10)
     parser.add_argument('--CAT_EVAL', default=False, action='store_true')
 
@@ -73,17 +73,9 @@ def get_args():
     parser.add_argument('--Return_B4_BN', default=False, action='store_true')
     parser.add_argument('--prj_output_dim', type=int, default=2048)
     parser.add_argument("--pooling", default='GEM', type=str, help='["attnpool","GEM"]')
-    parser.add_argument("--pretrain_choice", default='RN50_ORI',help='ViT-B/16,RN50,RN50_ORI,LASTVIT_ORI') # whether use pretrained model
-    parser.add_argument("--clip_download_root", type=str, default='/home/cgv841/.cache/clip')
-    parser.add_argument("--lastvit_pretrained", type=str, default='/home/cgv841/ybj/pretrained/ViT_190k.pth')
-    parser.add_argument("--lastvit_pretrained_rgb", type=str, default=None,
-                        help='optional RGB tower checkpoint for strict two-stage training')
-    parser.add_argument("--lastvit_pretrained_ir", type=str, default=None,
-                        help='optional IR tower checkpoint for strict two-stage training')
-    parser.add_argument("--lastvit_backbone_name", type=str, default='vit_base_patch16_224')
-    parser.add_argument("--lastvit_topk", type=int, default=16)
-    parser.add_argument("--lastvit_drop_path_rate", type=float, default=0.1)
+    parser.add_argument("--pretrain_choice", default='RN50_ORI',help='ViT-B/16,RN50,RN50_ORI,PMT_VIT') # whether use pretrained model
     parser.add_argument("--temperature", type=float, default=0.07, help="initial temperature value, if 0, don't use temperature")
+    parser.add_argument("--freeze_text_in_image_only", default=False, action='store_true')
 
     ######################## cross transfomer setting ########################
     parser.add_argument("--cmt_depth", type=int, default=1, help="cross modal transformer self attn layers")
@@ -92,15 +84,6 @@ def get_args():
     ######################## loss settings ########################
     # parser.add_argument("--uni_train", default=False, action='store_true', help="whether use uni_modal training")
     parser.add_argument("--loss_names", default='wrt,id', help="which loss to use ['wrt', 'id', 'uni_reid', 'Fusion_Regular']")
-    parser.add_argument("--clip_loss_weight", type=float, default=1.0, help="RGB-IR CLIP-style contrastive loss weight")
-    parser.add_argument("--proto_loss_weight", type=float, default=0.05, help="RGB-IR prototype alignment loss weight")
-    parser.add_argument("--enable_rgb_ir_clip", default=False, action='store_true', help="enable RGB-IR CLIP-style alignment losses")
-    parser.add_argument("--enable_proto_align", default=False, action='store_true', help="enable RGB-IR prototype alignment")
-    parser.add_argument("--clip_use_aug_rgb", default=False, action='store_true', help="use RGB augmentation branch in CLIP contrastive loss")
-    parser.add_argument("--clip_aug_weight", type=float, default=0.5, help="weight for augmentation branch in CLIP contrastive loss")
-    parser.add_argument("--proto_momentum", type=float, default=0.9, help="EMA momentum for RGB/IR prototypes")
-    parser.add_argument("--enable_mean_shift", default=False, action='store_true', help="apply mean-shift from RGB to IR before clip alignment")
-    parser.add_argument("--mean_shift_alpha", type=float, default=0.0, help="mean-shift strength")
     parser.add_argument("--cmm_loss_weight", type=float, default=1.0, help="cross modal matching loss (tcmpm, cmpm, infonce...) weight")
     parser.add_argument("--id_loss_weight", type=float, default=1.0, help="id loss weight")
     parser.add_argument("--wrt_loss_weight", type=float, default=1.0, help="itc loss weight")
@@ -108,6 +91,16 @@ def get_args():
     ######################## vison trainsformer settings ########################
     parser.add_argument("--img_size", type=tuple, default=(288, 144))
     parser.add_argument("--stride_size", type=int, default=16)
+    parser.add_argument("--pmt_pretrained", type=str, default=None)
+    parser.add_argument("--pmt_embed_dim", type=int, default=768)
+    parser.add_argument("--pmt_patch_size", type=ast.literal_eval, default=(16, 16))
+    parser.add_argument("--pmt_stride_size", type=ast.literal_eval, default=(12, 12))
+    parser.add_argument("--pmt_depth", type=int, default=12)
+    parser.add_argument("--pmt_num_heads", type=int, default=12)
+    parser.add_argument("--pmt_mlp_ratio", type=float, default=4.0)
+    parser.add_argument("--pmt_dropout", type=float, default=0.03)
+    parser.add_argument("--pmt_attention_dropout", type=float, default=0.0)
+    parser.add_argument("--pmt_drop_path_rate", type=float, default=0.1)
 
     ######################## text transformer settings ########################
     parser.add_argument("--text_length", type=int, default=77)
@@ -133,14 +126,11 @@ def get_args():
     parser.add_argument("--beta", type=float, default=0.999, help='for adam and adamW')
     
     ######################## scheduler ########################
-    parser.add_argument('--total_train_epoch', type=int, default=60) # 100
-    parser.add_argument('--train_max_iter', type=int, default=0, help='max train iterations per epoch, 0 means full epoch')
-    parser.add_argument('--grad_clip_norm', type=float, default=1.0, help='gradient clipping max norm, <=0 to disable')
-    parser.add_argument('--skip_non_finite_batches', type=ast.literal_eval, default=True, help='skip batch when loss is NaN/Inf')
-    parser.add_argument("--milestones", type=int, nargs='+', default=(20, 40, 50)) # (40,60)
+    parser.add_argument('--total_train_epoch', type=int, default=120) # 100
+    parser.add_argument("--milestones", type=int, nargs='+', default=(40, 60, 100)) # (40,60)
     parser.add_argument("--gamma", type=float, default=0.1)
     parser.add_argument("--warmup_factor", type=float, default=0.01)
-    parser.add_argument("--warmup_epochs", type=int, default=5)
+    parser.add_argument("--warmup_epochs", type=int, default=10)
     parser.add_argument("--warmup_method", type=str, default="linear")
     parser.add_argument("--lrscheduler", type=str, default="step")
     parser.add_argument("--target_lr", type=float, default=0.0)

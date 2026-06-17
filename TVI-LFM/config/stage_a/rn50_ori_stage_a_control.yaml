@@ -1,0 +1,27 @@
+output_path: logs/stage_a_rn50_ori_control
+pretrain_choice: RN50_ORI
+
+training_mode: RGB_IR
+loss_names: wrt,id
+llm_aug: false
+Feat_Filter: false
+Fix_Visual: false
+Return_B4_BN: false
+freeze_text_in_image_only: true
+
+test_model_type: IR
+test_modality: IR
+fusion_way: add
+pooling: GEM
+prj_output_dim: 2048
+
+dataset: sysu
+sysu_data_path: /home/cgv841/datasets/SYSU-MM01
+img_h: 288
+img_w: 144
+img_size:
+- 288
+- 144
+batch_size: 32
+num_pos: 4
+seed: 1

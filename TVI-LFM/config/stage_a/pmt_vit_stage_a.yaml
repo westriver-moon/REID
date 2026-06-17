@@ -1,0 +1,41 @@
+output_path: logs/stage_a_pmt_vit
+pretrain_choice: PMT_VIT
+pmt_pretrained: PMT-SYSU/pretrained/jx_vit_base_p16_224-80ecf9dd.pth
+pmt_embed_dim: 768
+pmt_patch_size:
+- 16
+- 16
+pmt_stride_size:
+- 12
+- 12
+pmt_depth: 12
+pmt_num_heads: 12
+pmt_mlp_ratio: 4.0
+pmt_dropout: 0.03
+pmt_attention_dropout: 0.0
+pmt_drop_path_rate: 0.1
+
+training_mode: RGB_IR
+loss_names: wrt,id
+llm_aug: false
+Feat_Filter: false
+Fix_Visual: false
+Return_B4_BN: false
+freeze_text_in_image_only: true
+
+test_model_type: IR
+test_modality: IR
+fusion_way: add
+pooling: GEM
+prj_output_dim: 2048
+
+dataset: sysu
+sysu_data_path: /home/cgv841/datasets/SYSU-MM01
+img_h: 288
+img_w: 144
+img_size:
+- 288
+- 144
+batch_size: 32
+num_pos: 4
+seed: 1

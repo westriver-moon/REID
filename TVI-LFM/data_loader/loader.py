@@ -3,7 +3,7 @@ import torchvision.transforms as transforms
 from data_loader.dataset import process_query_sysu, process_gallery_sysu, \
     process_test_regdb,process_gallery_llcm,process_query_llcm, SYSU_Tri_Data,RegDB_Tri_Data,LLCM_Tri_Data,Test_Tri_Data
 from data_loader.processing import ChannelRandomErasing, ChannelAdapGray, ChannelExchange
-from data_loader.sampler import GenIdx, IdentitySampler, PairIdentitySampler
+from data_loader.sampler import GenIdx, IdentitySampler
 import torch.utils.data as data
 
 class Loader:
@@ -72,21 +72,16 @@ class Loader:
         # model setting
         self.mode = config.mode
         self.test_mode = config.test_mode
-        self.test_modality = config.test_modality
         self.gall_mode = config.gall_mode
         self.num_workers = config.num_workers
-        self.training_mode = config.training_mode
-        self.loss_names = config.loss_names
-        self.load_train_text = "Text" in config.training_mode
-        self.load_test_text = self.load_train_text and ('Fusion' in self.test_modality or 'Text' in self.test_modality)
-        self.joint_mode = config.joint_mode if self.load_train_text else "none"
+        self.joint_mode = config.joint_mode
 
         # nlp augmentation setting
-        self.Feat_Filter = config.Feat_Filter if self.load_train_text else False
+        self.Feat_Filter = config.Feat_Filter
         self.captioner_name = config.captioner_name
         self.llm_aug = config.llm_aug
         self.llm_aug_prob = config.llm_aug_prob
-        if self.load_train_text:
+        if "Text" in config.training_mode:
             print(f"Training With Text Generated From: {config.captioner_name}\n Traininig Mode: {config.training_mode}")
 
         # form dataloader
@@ -172,27 +167,22 @@ class Loader:
             query_samples = Test_Tri_Data(query_img, query_label, transform=self.transform_test,
                                      img_size=(self.img_w, self.img_h), data_path=self.sysu_data_path,\
                                         captioner_name=self.captioner_name, joint_mode=self.joint_mode,gallorquery='query',\
-                                            Feat_Filter=self.Feat_Filter, load_text=self.load_test_text)
+                                            Feat_Filter=self.Feat_Filter)
             self.query_label = query_label
             self.query_cam = query_cam
 
             self.n_query = len(query_label)
 
             gallery_samples_list = []
-            self.gall_label_list = []
-            self.gall_cam_list = []
             for i in range(10):
                 gall_img, gall_label, gall_cam = process_gallery_sysu(self.sysu_data_path, mode=self.test_mode, trial=i,
                                                                       gall_mode=self.gall_mode)
                 self.gall_cam = gall_cam
                 self.gall_label = gall_label
-                self.gall_cam_list.append(gall_cam)
-                self.gall_label_list.append(gall_label)
                 self.n_gallery = len(gall_label)
 
                 gallery_samples = Test_Tri_Data(gall_img, gall_label,data_path=self.sysu_data_path,transform=self.transform_test,
-                                        img_size=(self.img_w, self.img_h), joint_mode=self.joint_mode,gallorquery=f'gall[{i+1}]',
-                                        load_text=self.load_test_text)
+                                        img_size=(self.img_w, self.img_h), joint_mode=self.joint_mode,gallorquery=f'gall[{i+1}]')
                 gallery_samples_list.append(gallery_samples)
             return query_samples, gallery_samples_list
         elif self.dataset == 'regdb':
@@ -205,7 +195,7 @@ class Loader:
                                         img_size=(self.img_w, self.img_h), data_path=self.regdb_data_path,\
                                             captioner_name=self.captioner_name, \
                                                 joint_mode=self.joint_mode,gallorquery=f'query[{self.trial}]',\
-                                                Feat_Filter=self.Feat_Filter, load_text=self.load_test_text)
+                                                Feat_Filter=self.Feat_Filter)
                 query_samples_list.append(query_samples)
 
             gallery_samples_list = []
@@ -216,8 +206,7 @@ class Loader:
 
                 gallery_samples = Test_Tri_Data(gall_img, gall_label,data_path=self.regdb_data_path,transform=self.transform_test,
                                             img_size=(self.img_w, self.img_h), captioner_name=self.captioner_name,\
-                                                joint_mode=self.joint_mode,gallorquery=f'gall[{self.trial}]',
-                                                load_text=self.load_test_text)
+                                                joint_mode=self.joint_mode,gallorquery=f'gall[{self.trial}]')
                 gallery_samples_list.append(gallery_samples)
             return query_samples_list, gallery_samples_list
         elif self.dataset == 'llcm':
@@ -226,28 +215,23 @@ class Loader:
                                      img_size=(self.img_w, self.img_h), data_path=self.llcm_data_path,\
                                         captioner_name=self.captioner_name, \
                                             joint_mode=self.joint_mode,gallorquery='query',\
-                                            Feat_Filter=self.Feat_Filter, load_text=self.load_test_text)
+                                            Feat_Filter=self.Feat_Filter)
             self.query_label = query_label
             self.query_cam = query_cam
 
             self.n_query = len(query_label)
 
             gallery_samples_list = []
-            self.gall_label_list = []
-            self.gall_cam_list = []
             for i in range(10):
                 gall_img, gall_label, gall_cam = process_gallery_llcm(self.llcm_data_path, mode=1, trial=i) # vis
                 
                 self.gall_cam = gall_cam
                 self.gall_label = gall_label
-                self.gall_cam_list.append(gall_cam)
-                self.gall_label_list.append(gall_label)
                 self.n_gallery = len(gall_label)
 
                 gallery_samples = Test_Tri_Data(gall_img, gall_label,data_path=self.llcm_data_path,transform=self.transform_test,
                                             img_size=(self.img_w, self.img_h), captioner_name=self.captioner_name,\
-                                                joint_mode=self.joint_mode,gallorquery=f'gall[{i+1}]',
-                                                load_text=self.load_test_text)
+                                                joint_mode=self.joint_mode,gallorquery=f'gall[{i+1}]')
                 gallery_samples_list.append(gallery_samples)
             return query_samples, gallery_samples_list
         else:
@@ -255,17 +239,8 @@ class Loader:
 
 
     def get_train_loader(self):
-        loss_names = [loss_name.strip() for loss_name in self.loss_names.split(',')]
-        if self.dataset == 'regdb' and 'pair_clip' in loss_names:
-            sampler = PairIdentitySampler(
-                self.samples.train_color_label,
-                self.samples.train_thermal_label,
-                self.num_pos,
-                int(self.batch_size / self.num_pos),
-            )
-        else:
-            sampler = IdentitySampler(self.samples.train_color_label, self.samples.train_thermal_label, self.color_pos,
-                                      self.thermal_pos, self.num_pos, int(self.batch_size / self.num_pos))
+        sampler = IdentitySampler(self.samples.train_color_label, self.samples.train_thermal_label, self.color_pos,
+                                  self.thermal_pos, self.num_pos, int(self.batch_size / self.num_pos))
         self.samples.cIndex = sampler.index1
         self.samples.tIndex = sampler.index2
         train_loader = data.DataLoader(self.samples, batch_size=self.batch_size,

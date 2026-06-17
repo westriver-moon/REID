@@ -1,0 +1,34 @@
+{
+  "avg_epoch_seconds": 401.3097157239914,
+  "best_mAP": 0.9127841794895879,
+  "best_mAP_epoch": 34,
+  "best_rank1": 0.9394209354120266,
+  "best_rank1_epoch": 33,
+  "final_all": {
+    "mAP": 0.8972816278253006,
+    "modality": "rgb",
+    "mode": "all",
+    "num_gallery_candidates": 6775,
+    "num_queries": 6775,
+    "protocol": "same_modality",
+    "rank1": 0.9295471417965849,
+    "rank10": 0.9901559020044545,
+    "rank20": 0.9932739420935415,
+    "rank5": 0.9852412769116556
+  },
+  "final_indoor": {
+    "mAP": 0.9542560673906365,
+    "modality": "rgb",
+    "mode": "indoor",
+    "num_gallery_candidates": 2939,
+    "num_queries": 2939,
+    "protocol": "same_modality",
+    "rank1": 0.9276624702279687,
+    "rank10": 0.9916978564137461,
+    "rank20": 0.9944538958829536,
+    "rank5": 0.9878189860496767
+  },
+  "min_loss": 0.020925387579226223,
+  "min_loss_epoch": 40,
+  "num_epochs": 40
+}

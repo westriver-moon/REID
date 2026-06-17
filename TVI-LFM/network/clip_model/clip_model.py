@@ -16,7 +16,7 @@ import torch.nn.functional as F
 from torch import nn
 from network import RGB_Model, IR_Model, Shared_Model
 from network.gem_pool import GeneralizedMeanPoolingP
-from network.lastvit_adapter import Dual_LASTViT
+from network.pmt_vit_adapter import PMTViTVisual
 
 
 logger = logging.getLogger("CLIP2ReID.model")
@@ -411,19 +411,38 @@ class CLIP(nn.Module):
                  transformer_width: int,
                  transformer_heads: int,
                  transformer_layers: int,
-                 lastvit_pretrained: str = None,
-                 lastvit_pretrained_rgb: str = None,
-                 lastvit_pretrained_ir: str = None,
-                 lastvit_backbone_name: str = "vit_base_patch16_224",
-                 lastvit_topk: int = 16,
-                 lastvit_drop_path_rate: float = 0.1
+                 pmt_pretrained: str = None,
+                 pmt_patch_size=(16, 16),
+                 pmt_stride_size=(12, 12),
+                 pmt_embed_dim: int = 768,
+                 pmt_depth: int = 12,
+                 pmt_num_heads: int = 12,
+                 pmt_mlp_ratio: float = 4.0,
+                 pmt_dropout: float = 0.03,
+                 pmt_attention_dropout: float = 0.0,
+                 pmt_drop_path_rate: float = 0.1,
                  ):
         super().__init__()
 
         self.context_length = context_length
         self.visual_name = visual_name
         print(f'visual_model_name: {visual_name}')
-        if visual_name == "RN50_ORI":
+        if visual_name == "PMT_VIT":
+            self.visual = PMTViTVisual(
+                input_resolution=image_resolution,
+                patch_size=pmt_patch_size,
+                stride_size=pmt_stride_size,
+                embed_dim=pmt_embed_dim,
+                depth=pmt_depth,
+                num_heads=pmt_num_heads,
+                mlp_ratio=pmt_mlp_ratio,
+                drop_rate=pmt_dropout,
+                attn_drop_rate=pmt_attention_dropout,
+                drop_path_rate=pmt_drop_path_rate,
+                output_dim=embed_dim,
+                pretrained_path=pmt_pretrained,
+            )
+        elif visual_name == "RN50_ORI":
             vision_heads = vision_width * 32 // 64
             self.visual = Dual_Resnet(
                 output_dim=embed_dim,
@@ -431,18 +450,6 @@ class CLIP(nn.Module):
                 input_resolution=image_resolution,
                 width=vision_width,
                 pooling=pooling
-            )
-        elif visual_name == "LASTVIT_ORI":
-            self.visual = Dual_LASTViT(
-                output_dim=embed_dim,
-                input_resolution=image_resolution,
-                backbone_name=lastvit_backbone_name,
-                pretrained_path=lastvit_pretrained,
-                pretrained_rgb_path=lastvit_pretrained_rgb,
-                pretrained_ir_path=lastvit_pretrained_ir,
-                drop_path_rate=lastvit_drop_path_rate,
-                topk=lastvit_topk,
-                pooling=pooling,
             )
         elif isinstance(vision_layers, (tuple, list)):
             vision_heads = vision_width * 32 // 64
@@ -500,10 +507,8 @@ class CLIP(nn.Module):
                     if name.endswith("bn3.weight"):
                         nn.init.zeros_(param)
 
-        if self.visual_name in {"RN50_ORI", "LASTVIT_ORI"} and self.visual.pooling == 'GEM' and isinstance(self.visual.img_projection, nn.Linear):
+        if self.visual_name == "RN50_ORI" and self.visual.pooling == 'GEM' and isinstance(self.visual.img_projection, nn.Linear):
             nn.init.normal_(self.visual.img_projection.weight, std=self.visual.img_projection.weight.shape[0] ** -0.5)
-            if self.visual.img_projection.bias is not None:
-                nn.init.constant_(self.visual.img_projection.bias, 0.0)
 
         # init text transformer parameters
         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
@@ -530,13 +535,11 @@ class CLIP(nn.Module):
 
     @property
     def dtype(self):
+        if hasattr(self.visual, "input_dtype"):
+            return self.visual.input_dtype
         if self.visual.__class__.__name__ == 'Dual_Resnet':
             return self.visual.rgb_model.resnet_conv[0].weight.dtype
-        if hasattr(self.visual, 'input_dtype'):
-            return self.visual.input_dtype
-        if hasattr(self.visual, 'conv1'):
-            return self.visual.conv1.weight.dtype
-        return next(self.visual.parameters()).dtype
+        return self.visual.conv1.weight.dtype
 
     def encode_image(self, image, mode): # mode: 'rgb' or 'ir' or None
         if mode is None:
@@ -579,17 +582,20 @@ class CLIP(nn.Module):
     
     
     def load_param(self, state_dict):
+        if isinstance(state_dict, dict) and 'model' in state_dict:
+            state_dict = state_dict['model']
+        if isinstance(state_dict, dict) and 'state_dict' in state_dict:
+            state_dict = state_dict['state_dict']
         # 将pretrained_dict里不属于model_dict的键剔除掉
-        param_dict =  {k: v for k, v in state_dict.items() if k in self.state_dict()}
-
-        if 'model' in param_dict:
-            param_dict = param_dict['model']
-        if 'state_dict' in param_dict:
-            param_dict = param_dict['state_dict']
+        param_dict =  {}
+        own_state = self.state_dict()
+        for k, v in state_dict.items():
+            if self.visual_name == "PMT_VIT" and k.startswith("visual."):
+                continue
+            if k in own_state:
+                param_dict[k] = v
         for k, v in param_dict.items():
             if 'rgb_model' in k or 'ir_model' in k or 'shared_model' in k:
-                continue
-            if self.visual_name == 'LASTVIT_ORI' and k.startswith('visual.'):
                 continue
             if k == 'visual.positional_embedding' and v.shape != self.visual.positional_embedding.shape:
                 print(f'===========================Resizing while copying {k}=========================')
@@ -707,7 +713,7 @@ def build_CLIP_from_openai_pretrained(name: str, image_size: Union[int, Tuple[in
     model : torch.nn.Module
         The CLIP model
     """
-    if name == "LASTVIT_ORI":
+    if name == "PMT_VIT":
         weight_name = "RN50"
     elif "RN50" in name:
         weight_name = "RN50"
@@ -762,12 +768,6 @@ def build_CLIP_from_openai_pretrained(name: str, image_size: Union[int, Tuple[in
         'visual_name': name,
         'embed_dim': embed_dim,
         'pooling': pooling,
-        'lastvit_pretrained': config_dict.get('lastvit_pretrained'),
-        'lastvit_pretrained_rgb': config_dict.get('lastvit_pretrained_rgb'),
-        'lastvit_pretrained_ir': config_dict.get('lastvit_pretrained_ir'),
-        'lastvit_backbone_name': config_dict.get('lastvit_backbone_name', 'vit_base_patch16_224'),
-        'lastvit_topk': config_dict.get('lastvit_topk', 16),
-        'lastvit_drop_path_rate': config_dict.get('lastvit_drop_path_rate', 0.1),
         'image_resolution': image_resolution,
         'vision_layers': vision_layers, 
         'vision_width': vision_width, 
@@ -776,7 +776,17 @@ def build_CLIP_from_openai_pretrained(name: str, image_size: Union[int, Tuple[in
         'vocab_size': vocab_size, 
         'transformer_width': transformer_width, 
         'transformer_heads': transformer_heads, 
-        'transformer_layers': transformer_layers
+        'transformer_layers': transformer_layers,
+        'pmt_pretrained': config_dict.get("pmt_pretrained"),
+        'pmt_patch_size': config_dict.get("pmt_patch_size", (16, 16)),
+        'pmt_stride_size': config_dict.get("pmt_stride_size", (12, 12)),
+        'pmt_embed_dim': config_dict.get("pmt_embed_dim", 768),
+        'pmt_depth': config_dict.get("pmt_depth", 12),
+        'pmt_num_heads': config_dict.get("pmt_num_heads", 12),
+        'pmt_mlp_ratio': config_dict.get("pmt_mlp_ratio", 4.0),
+        'pmt_dropout': config_dict.get("pmt_dropout", 0.03),
+        'pmt_attention_dropout': config_dict.get("pmt_attention_dropout", 0.0),
+        'pmt_drop_path_rate': config_dict.get("pmt_drop_path_rate", 0.1),
     }
 
 
@@ -792,4 +802,3 @@ def build_CLIP_from_openai_pretrained(name: str, image_size: Union[int, Tuple[in
     # resize modified pos embedding
     model.load_param(state_dict)
     return model, model_cfg
-

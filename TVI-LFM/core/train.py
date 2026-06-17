@@ -7,42 +7,44 @@ def train(base, loaders, scaler, config, optimizer):
     base.set_train()
     meter = MultiItemAverageMeter()
     loader = loaders.get_train_loader()
-    if config.pretrain_choice == "LASTVIT_ORI":
+    if config.pretrain_choice in ["RN50", "RN50_ORI"]:
         mode = "1/3"
-    elif "RN" in config.pretrain_choice:
-        mode = "1/3"
-    elif "ViT" in config.pretrain_choice:
+    elif config.pretrain_choice in ["ViT-B/16", "PMT_VIT"]:
         mode = None
-    else:
+    else: 
         raise ValueError(f"Pretrain model {config.pretrain_choice} choice not supported")
 
+    # for i, (input1_0, input1_1, input2, input3, label1, label2) in enumerate(loader):
     for i, batch_dict in enumerate(loader):
-        batch_dict = {key: value.to(base.device) for key, value in batch_dict.items()}
-        optimizer.zero_grad(set_to_none=True)
+        # data preparing
+        # rgb_imgs0, rgb_imgs1, rgb_pids = input1_0, input1_1, label1
+        # ir_imgs, ir_pids = input2, label2
+        # text = input3
+        # rgb_imgs0, rgb_imgs1, rgb_pids = rgb_imgs0.to(base.device), \
+        #                                 rgb_imgs1.to(base.device),\
+        #                                 rgb_pids.to(base.device).long()
+        # ir_imgs, ir_pids = ir_imgs.to(base.device), ir_pids.to(base.device).long()
+        # text = text.to(base.device).long()
 
+        # data preparing
+        batch_dict = {key: value.to(base.device) for key, value in batch_dict.items()}
+        # 清空所有梯度
+        optimizer.zero_grad()
+
+        # feature and loss computing
         with amp.autocast(enabled=True):
+
+            # get loss
             ret = base(batch_dict, mode)
             losses = [value for key, value in ret.items() if 'loss' in key]
-            if not losses:
-                raise RuntimeError("No loss terms were produced by model forward")
             total_loss = sum(losses)
-
-        if not torch.isfinite(total_loss):
-            if getattr(config, 'skip_non_finite_batches', True):
-                print(f"[warn] skip non-finite loss at iter {i}: {float(total_loss.detach().cpu())}")
-                continue
-            raise FloatingPointError(f"Non-finite loss at iter {i}: {float(total_loss.detach().cpu())}")
-
+        
+        # backward
         scaler.scale(total_loss).backward()
-
-        grad_clip_norm = float(getattr(config, 'grad_clip_norm', 0.0) or 0.0)
-        if grad_clip_norm > 0:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(base.parameters(), grad_clip_norm)
-
         scaler.step(optimizer)
         scaler.update()
 
+        # update meter
         acc_sign = False
         acc_value = 0
         for key, value in ret.items():
@@ -51,11 +53,17 @@ def train(base, loaders, scaler, config, optimizer):
             if 'acc' in key:
                 acc_sign = True
                 acc_value = value
+                # meter.update({key: value})
         meter.update({'total_loss': total_loss})
         if acc_sign:
             meter.update({'acc': acc_value})
-
-        if config.train_max_iter > 0 and (i + 1) >= config.train_max_iter:
-            break
+            
 
     return meter.get_val(), meter.get_str()
+
+
+
+
+
+
+

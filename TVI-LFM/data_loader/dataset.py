@@ -520,7 +520,7 @@ class Test_Tri_Data(data.Dataset):
     def __init__(self, test_img_file, test_label, data_path, transform=None, \
                  img_size=(144, 288), captioner_name='GIT', \
                     joint_mode="ir_crossfusion", gallorquery='query', \
-                            Feat_Filter=False, load_text=True): # include Feat_Filter=False
+                            Feat_Filter=False): # include Feat_Filter=False
         self.tokenizer = SimpleTokenizer()
         self.Feat_Filter = Feat_Filter
         self.type = gallorquery
@@ -529,14 +529,12 @@ class Test_Tri_Data(data.Dataset):
 
         # Load ir test img data and text
 
-        text_dict_rgb = None
-        text_dict_ir = None
-        if load_text:
-            with open(data_path + f'Text/{captioner_name}_RGB/id_caption_map_{captioner_name}_RGB.json','r') as f:
-                text_dict_rgb = json.load(f)
-            if Feat_Filter:
-                with open(data_path + f'Text/{captioner_name}_IR/caption_dict_{captioner_name}_IR.json','r') as f:
-                    text_dict_ir = json.load(f)
+        with open(data_path + f'Text/{captioner_name}_RGB/id_caption_map_{captioner_name}_RGB.json','r') as f:
+            text_dict_rgb = json.load(f)
+        if Feat_Filter:
+            with open(data_path + f'Text/{captioner_name}_IR/caption_dict_{captioner_name}_IR.json','r') as f:
+                text_dict_ir = json.load(f)
+        
 
         test_image = []
         test_text_ir = []
@@ -551,13 +549,12 @@ class Test_Tri_Data(data.Dataset):
             test_image.append(pix_array)
             
             # load text from the test_label
-            if load_text:
-                test_text_rgb.append(tokenize(np.random.choice(text_dict_rgb[str(test_label[i])]), self.tokenizer))
-                if Feat_Filter:
-                    if 'test_nir' in test_img_file[i]: # replace as nir
-                        test_text_ir.append(tokenize(text_dict_ir[data_path + 'nir/' + test_img_file[i].replace('test_nir','nir').split('cam')[1][2:]]['description'], self.tokenizer))
-                    else:
-                        test_text_ir.append(tokenize(text_dict_ir[test_img_file[i]]['description'], self.tokenizer))
+            test_text_rgb.append(tokenize(np.random.choice(text_dict_rgb[str(test_label[i])]), self.tokenizer))
+            if Feat_Filter:
+                if 'test_nir' in test_img_file[i]: # replace as nir
+                    test_text_ir.append(tokenize(text_dict_ir[data_path + 'nir/' + test_img_file[i].replace('test_nir','nir').split('cam')[1][2:]]['description'], self.tokenizer))
+                else:
+                    test_text_ir.append(tokenize(text_dict_ir[test_img_file[i]]['description'], self.tokenizer))
 
         test_image = np.array(test_image)
         test_text_ir = np.array(test_text_ir)

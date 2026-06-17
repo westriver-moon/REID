@@ -49,7 +49,7 @@ class TripletLoss_WRT(nn.Module):
         loss = self.ranking_loss(closest_negative - furthest_positive, y)
 
         return loss
-
+    
 
 class TripletLoss_WRT_local(nn.Module):
 
@@ -91,7 +91,7 @@ def cosine_matrix_compute(feat1,feat2,logit_scale):
 
     # cosine similarity as logits r2t # text
     similarity_per_feat1 = logit_scale * feat1_norm @ feat2_norm.t()
-
+    
     # cosine_matrix = F.softmax(similarity_per_feat1, dim=-1)
 
     return similarity_per_feat1
@@ -99,7 +99,7 @@ def cosine_matrix_compute(feat1,feat2,logit_scale):
 def kl_align_matrix(aligned_matrix, true_matrix):
     kl_loss = F.kl_div(aligned_matrix, true_matrix, reduction='mean')
     return kl_loss
-
+    
 
 def kl_align_loss(ir_feat,fusion_feat,text_feat,logit_scale,mode='I2T'):
     ir2fusion_matrix = cosine_matrix_compute(ir_feat,fusion_feat,logit_scale)
@@ -149,51 +149,7 @@ def L_t2i(img_feat,text_feat,logit_scale,labels):
     mask = torch.eq(labels.unsqueeze(1),labels.unsqueeze(0)).float()
     return -(torch.log_softmax(cosine_matrix_compute(text_feat,img_feat,logit_scale),dim=-1) * mask).mean()/sum(mask)
 
-
-def supervised_clip_contrastive_loss(
-    rgb_feat,
-    ir_feat,
-    rgb_labels,
-    ir_labels,
-    logit_scale,
-    eps=1e-6,
-):
-    """CLIP-style symmetric contrastive loss with identity-aware positives."""
-    rgb_norm = F.normalize(rgb_feat, dim=-1)
-    ir_norm = F.normalize(ir_feat, dim=-1)
-
-    logits_rgb_to_ir = logit_scale * rgb_norm @ ir_norm.t()
-    logits_ir_to_rgb = logits_rgb_to_ir.t()
-
-    pos_mask = torch.eq(rgb_labels.unsqueeze(1), ir_labels.unsqueeze(0)).float()
-    pos_rgb = pos_mask.sum(dim=1, keepdim=True).clamp(min=1.0)
-    pos_ir = pos_mask.sum(dim=0, keepdim=True).t().clamp(min=1.0)
-
-    loss_rgb_to_ir = -((F.log_softmax(logits_rgb_to_ir, dim=1) * pos_mask).sum(dim=1, keepdim=True) / (pos_rgb + eps)).mean()
-    loss_ir_to_rgb = -((F.log_softmax(logits_ir_to_rgb, dim=1) * pos_mask.t()).sum(dim=1, keepdim=True) / (pos_ir + eps)).mean()
-
-    return 0.5 * (loss_rgb_to_ir + loss_ir_to_rgb)
-
-
-def pair_clip_contrastive_loss(
-    rgb_feat,
-    ir_feat,
-    logit_scale,
-):
-    """CLIP-style symmetric loss for one-to-one RGB/IR pairs in a batch."""
-    if rgb_feat.size(0) != ir_feat.size(0):
-        raise ValueError(
-            f"Pair CLIP requires equal batch sizes, got {rgb_feat.size(0)} and {ir_feat.size(0)}"
-        )
-
-    rgb_norm = F.normalize(rgb_feat, dim=-1)
-    ir_norm = F.normalize(ir_feat, dim=-1)
-    logits_rgb_to_ir = logit_scale * rgb_norm @ ir_norm.t()
-    labels = torch.arange(rgb_feat.size(0), device=rgb_feat.device)
-    loss_rgb_to_ir = F.cross_entropy(logits_rgb_to_ir, labels)
-    loss_ir_to_rgb = F.cross_entropy(logits_rgb_to_ir.t(), labels)
-    return 0.5 * (loss_rgb_to_ir + loss_ir_to_rgb)
-
+    
 
 
 

@@ -1,0 +1,225 @@
+{
+  "epoch": 11,
+  "metrics": {
+    "mAP": 0.8054575888243569,
+    "modality": "ir",
+    "mode": "all",
+    "num_gallery_candidates": 3803,
+    "num_queries": 3803,
+    "protocol": "same_modality",
+    "rank1": 0.7083889927865348,
+    "rank10": 0.9795618487843976,
+    "rank20": 0.9930537002404487,
+    "rank5": 0.9344109003473149
+  },
+  "retrieval_examples": [
+    {
+      "gallery_paths": [
+        "/home/cgv841/datasets/SYSU-MM01/cam6/0010/0017.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0031/0002.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0020.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0037/0007.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0043/0013.jpg"
+      ],
+      "gallery_pids": [
+        10,
+        31,
+        6,
+        37,
+        43
+      ],
+      "query_camid": 3,
+      "query_path": "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0001.jpg",
+      "query_pid": 6,
+      "scores": [
+        0.6893013119697571,
+        0.666034460067749,
+        0.634800910949707,
+        0.6213306188583374,
+        0.6066117286682129
+      ]
+    },
+    {
+      "gallery_paths": [
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0010/0015.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0031/0002.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0040/0005.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam6/0010/0017.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0044/0011.jpg"
+      ],
+      "gallery_pids": [
+        10,
+        31,
+        40,
+        10,
+        44
+      ],
+      "query_camid": 3,
+      "query_path": "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0002.jpg",
+      "query_pid": 6,
+      "scores": [
+        0.7143917083740234,
+        0.6236323714256287,
+        0.6056246757507324,
+        0.603506326675415,
+        0.599389910697937
+      ]
+    },
+    {
+      "gallery_paths": [
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0043/0013.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0040/0005.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0031/0002.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0037/0007.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0010/0015.jpg"
+      ],
+      "gallery_pids": [
+        43,
+        40,
+        31,
+        37,
+        10
+      ],
+      "query_camid": 3,
+      "query_path": "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0003.jpg",
+      "query_pid": 6,
+      "scores": [
+        0.7898931503295898,
+        0.7234381437301636,
+        0.721856951713562,
+        0.7161122560501099,
+        0.6949813365936279
+      ]
+    },
+    {
+      "gallery_paths": [
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0040/0005.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0051/0008.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0043/0013.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam6/0044/0009.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0037/0007.jpg"
+      ],
+      "gallery_pids": [
+        40,
+        51,
+        43,
+        44,
+        37
+      ],
+      "query_camid": 3,
+      "query_path": "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0004.jpg",
+      "query_pid": 6,
+      "scores": [
+        0.8216457366943359,
+        0.7893801927566528,
+        0.7509292364120483,
+        0.7314547896385193,
+        0.66607266664505
+      ]
+    },
+    {
+      "gallery_paths": [
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0040/0005.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0044/0011.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0043/0013.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0031/0002.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam6/0006/0007.jpg"
+      ],
+      "gallery_pids": [
+        40,
+        44,
+        43,
+        31,
+        6
+      ],
+      "query_camid": 3,
+      "query_path": "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0005.jpg",
+      "query_pid": 6,
+      "scores": [
+        0.7129714488983154,
+        0.6699360609054565,
+        0.6612905263900757,
+        0.6302106380462646,
+        0.6217652559280396
+      ]
+    },
+    {
+      "gallery_paths": [
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0020.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0043/0013.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0037/0007.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam6/0045/0003.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0040/0005.jpg"
+      ],
+      "gallery_pids": [
+        6,
+        43,
+        37,
+        45,
+        40
+      ],
+      "query_camid": 3,
+      "query_path": "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0006.jpg",
+      "query_pid": 6,
+      "scores": [
+        0.7309216260910034,
+        0.6257028579711914,
+        0.6112042665481567,
+        0.5971074104309082,
+        0.5968608856201172
+      ]
+    },
+    {
+      "gallery_paths": [
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0020.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0043/0013.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0031/0002.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0037/0007.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0044/0011.jpg"
+      ],
+      "gallery_pids": [
+        6,
+        43,
+        31,
+        37,
+        44
+      ],
+      "query_camid": 3,
+      "query_path": "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0007.jpg",
+      "query_pid": 6,
+      "scores": [
+        0.6642956733703613,
+        0.5692970752716064,
+        0.5596284866333008,
+        0.5523452162742615,
+        0.5288112759590149
+      ]
+    },
+    {
+      "gallery_paths": [
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0020.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0010/0015.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam6/0010/0017.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0037/0007.jpg",
+        "/home/cgv841/datasets/SYSU-MM01/cam3/0043/0013.jpg"
+      ],
+      "gallery_pids": [
+        6,
+        10,
+        10,
+        37,
+        43
+      ],
+      "query_camid": 3,
+      "query_path": "/home/cgv841/datasets/SYSU-MM01/cam3/0006/0008.jpg",
+      "query_pid": 6,
+      "scores": [
+        0.7084642648696899,
+        0.6105191111564636,
+        0.6072417497634888,
+        0.6067981719970703,
+        0.6050218939781189
+      ]
+    }
+  ]
+}

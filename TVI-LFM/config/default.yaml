@@ -22,7 +22,7 @@ cuda: cuda
 dataset: sysu
 eval_epoch: 2
 eval_num_regdb: 1
-eval_start_epoch: 20
+eval_start_epoch: 80
 focal_three_fusion_loss: false
 focal_three_fusion_loss2: false
 focal_three_fusion_loss3: false
@@ -76,13 +76,28 @@ power: 0.9
 pretrain_choice: RN50_ORI
 pretrain_path: default
 prj_output_dim: 2048
+freeze_text_in_image_only: false
 regdb_data_path: datasets/regdb
 regdb_test_mode: t-v
 resume_test_model: -1
 resume_train_epoch: -1
 seed: 1
 stride_size: 16
-sysu_data_path: /home/cgv841/datasets/SYSU-MM01/
+pmt_pretrained: null
+pmt_embed_dim: 768
+pmt_patch_size:
+- 16
+- 16
+pmt_stride_size:
+- 12
+- 12
+pmt_depth: 12
+pmt_num_heads: 12
+pmt_mlp_ratio: 4.0
+pmt_dropout: 0.03
+pmt_attention_dropout: 0.0
+pmt_drop_path_rate: 0.1
+sysu_data_path: datasets/sysu
 target_lr: 0.0
 temperature: 0.07
 test_modality: Fusion
@@ -93,7 +108,7 @@ text_bias_lr_factor: 2.0
 text_length: 77
 text_weight_decay: 4.0e-05
 text_weight_decay_bias: 0.0
-total_train_epoch: 60
+total_train_epoch: 120
 training_mode: RGB_IR_Text
 training_weight_init: null
 trial: 1
@@ -102,26 +117,7 @@ visual_bias_lr_factor: 1.0
 visual_weight_decay: 0.0005
 visual_weight_decay_bias: 0.0005
 vocab_size: 49408
-warmup_epochs: 5
+warmup_epochs: 10
 warmup_factor: 0.01
 warmup_method: linear
 wrt_loss_weight: 1.0
-clip_loss_weight: 1.0
-proto_loss_weight: 0.05
-enable_rgb_ir_clip: false
-enable_proto_align: false
-clip_use_aug_rgb: false
-clip_aug_weight: 0.5
-proto_momentum: 0.9
-enable_mean_shift: false
-mean_shift_alpha: 0.0
-train_max_iter: 0
-
-lastvit_pretrained: /home/cgv841/ybj/pretrained/ViT_190k.pth
-lastvit_pretrained_rgb: null
-lastvit_pretrained_ir: null
-lastvit_backbone_name: vit_base_patch16_224
-lastvit_topk: 16
-lastvit_drop_path_rate: 0.1
-grad_clip_norm: 1.0
-skip_non_finite_batches: true
