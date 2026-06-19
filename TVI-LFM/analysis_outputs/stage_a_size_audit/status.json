@@ -1,0 +1,49 @@
+{
+  "status": "completed",
+  "audit_time": "2026-06-19 05:52:06 CST",
+  "updated_at": "2026-06-19 05:53:00 CST",
+  "scope": "Stage A PMT recipe 256x128 vs 288x144 code/config audit",
+  "active_runs_checked": true,
+  "critical_blocker_found": false,
+  "fair_size_ablation": true,
+  "pmt_faithful_reproduction": false,
+  "top_risks": [
+    "prj_output_dim=2048 makes this a TVI-LFM PMT integration rather than a pure 768-dim PMT-SYSU reproduction",
+    "logit_scale is trainable but unused in PMT image-only losses",
+    "regular latest checkpoint/resume is disabled in main.py",
+    "AdamWSkipEmptyGrad is an engineering compatibility patch shared by both active runs"
+  ],
+  "evidence": {
+    "loader_text_keys": [],
+    "batch_layout": "visible/IR labels aligned and num_pos chunks valid",
+    "epoch0_256x128": {
+      "id_loss": 11.9086685,
+      "tri_loss": 12.475067,
+      "total_loss": 24.383749,
+      "acc": 0.017578125
+    },
+    "epoch0_288x144": {
+      "id_loss": 11.90856,
+      "tri_loss": 12.365803,
+      "total_loss": 24.274378,
+      "acc": 0.01647809
+    },
+    "epoch1_256x128": {
+      "id_loss": 8.504924,
+      "tri_loss": 3.0162058,
+      "total_loss": 11.521136,
+      "acc": 0.22988506
+    },
+    "epoch1_288x144": {
+      "id_loss": 8.45896,
+      "tri_loss": 3.007791,
+      "total_loss": 11.46675,
+      "acc": 0.23334232
+    },
+    "first_eval_288x144": {
+      "mINP": 0.17556658366192995,
+      "mAP": 0.2731345858274037,
+      "rank1": 0.2503286898136139
+    }
+  }
+}

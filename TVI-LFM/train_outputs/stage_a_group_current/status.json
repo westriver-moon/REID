@@ -1,0 +1,57 @@
+{
+  "status": "complete",
+  "run_mode": "full_kickoff",
+  "launcher_pid": null,
+  "launcher_state": "a1_manual_launcher_completed",
+  "active_pid": null,
+  "started_at": "2026-06-18 11:05 CST",
+  "updated_at": "2026-06-19 CST",
+  "environment": "clipreid",
+  "gpu": "0",
+  "active_run": null,
+  "a1_auto_start": "manual_started",
+  "runs": [
+    {
+      "name": "A0_RN50_ORI_control",
+      "config": "config/stage_a/rn50_ori_stage_a_control.yaml",
+      "command": "python main.py --config_select config/stage_a/rn50_ori_stage_a_control.yaml",
+      "max_steps": 120,
+      "completed_steps": 116,
+      "best_metric": {
+        "epoch": 107,
+        "rank1": 0.5250591039657593,
+        "mAP": 0.505829249902703,
+        "mINP": 0.36470714303852086
+      },
+      "best_checkpoint": "logs/stage_a_rn50_ori_control/sysu/Base/Baseline_train[RGB_IR]_wrt,id/models/model_IR_107.pth",
+      "stop_reason": "stopped_by_user_request_at_logged_epoch_115_before_120"
+    },
+    {
+      "name": "A1_PMT_VIT_main",
+      "config": "config/stage_a/pmt_vit_stage_a.yaml",
+      "command": "python main.py --config_select config/stage_a/pmt_vit_stage_a.yaml",
+      "max_steps": 40,
+      "completed_steps": 40,
+      "best_metric": {
+        "epoch": 31,
+        "rank1": 0.24417567000000002,
+        "mAP": 0.2456726235130921,
+        "mINP": 0.13725505944809416
+      },
+      "best_checkpoint": "logs/stage_a_pmt_vit/sysu/Base/Baseline_train[RGB_IR]_wrt,id/models/model_IR_31.pth",
+      "final_metric": {
+        "epoch": 39,
+        "rank1": 0.20965028,
+        "mAP": 0.2173751029145454,
+        "mINP": 0.11964093029402836
+      },
+      "stop_reason": "completed_40_epochs",
+      "started_at": "2026-06-18 21:25 CST",
+      "finished_at": "2026-06-19 04:13:52 CST",
+      "pid": 2971533,
+      "launcher_pid": 2971520,
+      "launcher_log": "train_outputs/stage_a_group_current/a1_launcher.log",
+      "train_log": "logs/stage_a_pmt_vit/sysu/Base/Baseline_train[RGB_IR]_wrt,id/logs/log.log"
+    }
+  ]
+}

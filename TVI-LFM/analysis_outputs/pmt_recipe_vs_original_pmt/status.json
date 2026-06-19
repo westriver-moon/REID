@@ -1,0 +1,10 @@
+{
+  "status": "complete",
+  "mode": "read_only",
+  "summary": "Compared current TVI-LFM Stage A PMT-recipe implementation with PMT-SYSU original and mbpatch configurations.",
+  "primary_gap": "Current TVI-LFM run is PMT-like, not a faithful PMT-SYSU reproduction; main differences are 2048 projection/head, CLIP2ReID wrapper, missing MBPatch branch, BN bias behavior, warmup indexing, and evaluation/checkpoint surface.",
+  "artifacts": [
+    "SUMMARY.md",
+    "RISKS.md"
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "status": "complete",
+  "documented_command_status": "complete",
+  "run_mode": "full_kickoff",
+  "tmux_session": "tvi_lfm_mbpatch_30",
+  "pid": 214475,
+  "gpu": 0,
+  "config": "config/stage_a/pmt_vit_stage_a_pmt_recipe_288x144_768_mbpatch.yaml",
+  "dataset": "SYSU-MM01",
+  "dataset_path": "/home/cgv841/datasets/SYSU-MM01/",
+  "checkpoint_source": "/home/cgv841/ybj/PMT-SYSU/pretrained/jx_vit_base_p16_224-80ecf9dd.pth",
+  "command": "python main.py --config_select config/stage_a/pmt_vit_stage_a_pmt_recipe_288x144_768_mbpatch.yaml",
+  "launcher_log": "/home/cgv841/ybj/TVI-LFM/train_outputs/stage_a_pmt_recipe_mbpatch_30/a1_mbpatch_launcher.log",
+  "training_log": "/home/cgv841/ybj/TVI-LFM/logs/stage_a_pmt_vit_recipe_288x144_768_mbpatch_run1/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe/logs/log.log",
+  "output_path": "/home/cgv841/ybj/TVI-LFM/logs/stage_a_pmt_vit_recipe_288x144_768_mbpatch_run1/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe",
+  "max_steps": 30,
+  "completed_steps": 30,
+  "best_metric": {
+    "name": "Rank-1",
+    "value": 0.63846964,
+    "percent": 63.84696399999999,
+    "epoch": 27,
+    "mAP_percent": 62.64534674659308,
+    "mINP_percent": 50.40276839047779
+  },
+  "best_checkpoint": "/home/cgv841/ybj/TVI-LFM/logs/stage_a_pmt_vit_recipe_288x144_768_mbpatch_run1/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe/models/model_IR_27.pth",
+  "stop_reason": "completed_30_epochs",
+  "main_blocker": null,
+  "startup_verified": true,
+  "started_at": "2026-06-19 17:12:52 CST",
+  "last_checked_at": "2026-06-19 21:49:40 CST",
+  "final_metric": {
+    "epoch": 29,
+    "rank1_percent": 63.468312999999995,
+    "mAP_percent": 62.36933806061315,
+    "mINP_percent": 50.207375378682215
+  },
+  "plots": {
+    "dashboard": "/home/cgv841/ybj/TVI-LFM/train_outputs/stage_a_pmt_recipe_mbpatch_30/plots/mbpatch_comparison_dashboard.png",
+    "rank1": "/home/cgv841/ybj/TVI-LFM/train_outputs/stage_a_pmt_recipe_mbpatch_30/plots/mbpatch_eval_rank1.png",
+    "map": "/home/cgv841/ybj/TVI-LFM/train_outputs/stage_a_pmt_recipe_mbpatch_30/plots/mbpatch_eval_map.png",
+    "minp": "/home/cgv841/ybj/TVI-LFM/train_outputs/stage_a_pmt_recipe_mbpatch_30/plots/mbpatch_eval_minp.png",
+    "loss": "/home/cgv841/ybj/TVI-LFM/train_outputs/stage_a_pmt_recipe_mbpatch_30/plots/mbpatch_train_total_loss.png",
+    "acc": "/home/cgv841/ybj/TVI-LFM/train_outputs/stage_a_pmt_recipe_mbpatch_30/plots/mbpatch_train_acc.png",
+    "best_bars": "/home/cgv841/ybj/TVI-LFM/train_outputs/stage_a_pmt_recipe_mbpatch_30/plots/mbpatch_best_metric_bars.png",
+    "external_bars": "/home/cgv841/ybj/TVI-LFM/train_outputs/stage_a_pmt_recipe_mbpatch_30/plots/mbpatch_external_reference_bars.png",
+    "epoch23_bars": "/home/cgv841/ybj/TVI-LFM/train_outputs/stage_a_pmt_recipe_mbpatch_30/plots/mbpatch_epoch23_metric_bars.png"
+  }
+}

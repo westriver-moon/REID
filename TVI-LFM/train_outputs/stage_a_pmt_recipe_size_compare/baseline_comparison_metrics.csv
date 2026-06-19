@@ -1,0 +1,13 @@
+method,short,rank1,map,minp,note
+"TVI-LFM A0 RN50_ORI
+local image-only",A0 RN50,52.50591039657593,50.5829249902703,36.47071430385209,"Local Stage A control, TVI-LFM recipe, RGB_IR image-only, stopped at epoch 115; best epoch 107."
+"TVI-LFM A1 PMT_VIT
+plain replacement",A1 plain,24.417567,24.56726235130921,13.725505944809417,"Naive PMT_VIT replacement under original TVI-LFM wrt,id recipe; best epoch 31/40."
+"A1 PMT recipe
+256x128",PMT recipe 256,63.681304,61.88834971059285,48.5702415121042,Current TVI-LFM-integrated PMT recipe run2; best/final epoch 23/24.
+"A1 PMT recipe
+288x144",PMT recipe 288,64.71207,62.41672673336647,48.9805989023656,Current TVI-LFM-integrated PMT recipe run2; best/final epoch 23/24.
+"PMT official ckpt
+avg reference",PMT official,68.51,66.68,54.26,Reference already used in stage_a_group_current comparison; official checkpoint average.
+"PMT-SYSU mbpatch
+reproduction final",PMT mbpatch,70.4443871974945,67.65964706393132,54.86118641107997,Independent PMT-SYSU mbpatch reproduction metrics.csv final epoch 24.

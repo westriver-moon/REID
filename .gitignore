@@ -30,6 +30,8 @@ Thumbs.db
 .codex/
 codex-local/
 tmp/
+git-backups/
+**/.git.backup*/
 
 # Offline weight staging and model storage
 manual_weight_upload/inbox/
@@ -54,3 +56,8 @@ TVI-LFM/outputs/
 TVI-LFM/network/clip_model/data/
 TVI-LFM/network/clip_model/checkpoint.pth.tar
 TVI-LFM/project/sysumm01/datasets/vcm_index/
+
+# Other research runtime artifacts
+PMT-SYSU/outputs/
+Single-experiment/logs/
+Single-experiment/pretrained/

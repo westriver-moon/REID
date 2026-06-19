@@ -1,0 +1,30 @@
+{
+  "current_best": {
+    "method": "A1 PMT recipe\n288x144",
+    "short": "PMT recipe 288",
+    "rank1": 64.71207,
+    "map": 62.41672673336647,
+    "minp": 48.9805989023656,
+    "note": "Current TVI-LFM-integrated PMT recipe run2; best/final epoch 23/24."
+  },
+  "delta_vs_a0_points": {
+    "rank1": 12.20615960342407,
+    "map": 11.833801743096167,
+    "minp": 12.509884598513509
+  },
+  "delta_vs_plain_a1_points": {
+    "rank1": 40.294503,
+    "map": 37.849464382057256,
+    "minp": 35.25509295755619
+  },
+  "delta_vs_pmt_official_points": {
+    "rank1": -3.797930000000008,
+    "map": -4.26327326663354,
+    "minp": -5.279401097634398
+  },
+  "delta_vs_pmt_mbpatch_points": {
+    "rank1": -5.73231719749451,
+    "map": -5.24292033056485,
+    "minp": -5.88058750871437
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "status": "completed",
+  "run_mode": "full_kickoff",
+  "started_at": "2026-06-19 05:42:09 CST",
+  "completed_at": "2026-06-19 08:12:48 CST",
+  "updated_at": "2026-06-19 08:13:00 CST",
+  "environment": "clipreid",
+  "engineering_fixes": [
+    {
+      "file": "solver/build.py",
+      "summary": "Use AdamWSkipEmptyGrad for AdamW to skip no-gradient param groups on this older PyTorch build."
+    }
+  ],
+  "previous_attempts": [
+    {
+      "name": "initial_kickoff",
+      "started_at": "2026-06-19 05:36:34 CST",
+      "status": "failed",
+      "stop_reason": "AdamW UnboundLocalError beta1 on an empty-gradient param group",
+      "launcher_logs": [
+        "train_outputs/stage_a_pmt_recipe_size_compare/a1r_256x128_launcher.log",
+        "train_outputs/stage_a_pmt_recipe_size_compare/a1r_288x144_launcher.log"
+      ]
+    },
+    {
+      "name": "run1_restart",
+      "started_at": "2026-06-19 05:39:50 CST",
+      "status": "failed",
+      "stop_reason": "Same AdamW empty-gradient param-group issue before SafeAdamW patch",
+      "launcher_logs": [
+        "train_outputs/stage_a_pmt_recipe_size_compare/a1r_256x128_run1_launcher.log",
+        "train_outputs/stage_a_pmt_recipe_size_compare/a1r_288x144_run1_launcher.log"
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "name": "A1R_256x128",
+      "status": "completed",
+      "config": "config/stage_a/pmt_vit_stage_a_pmt_recipe_256x128.yaml",
+      "command": "python main.py --config_select config/stage_a/pmt_vit_stage_a_pmt_recipe_256x128.yaml",
+      "physical_gpu": "0",
+      "launcher_pid": 3517143,
+      "python_pid": 3517164,
+      "launcher_log": "train_outputs/stage_a_pmt_recipe_size_compare/a1r_256x128_run2_launcher.log",
+      "output_path": "logs/stage_a_pmt_vit_recipe_256x128_run2/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe",
+      "max_steps": 24,
+      "completed_steps": 24,
+      "best_metric": {
+        "epoch": 23,
+        "rank1": 0.63681304,
+        "mAP": 0.6188834971059285,
+        "mINP": 0.48570241512104195
+      },
+      "best_checkpoint": "logs/stage_a_pmt_vit_recipe_256x128_run2/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe/models/model_IR_23.pth",
+      "stop_reason": "completed"
+    },
+    {
+      "name": "A1R_288x144",
+      "status": "completed",
+      "config": "config/stage_a/pmt_vit_stage_a_pmt_recipe_288x144.yaml",
+      "command": "python main.py --config_select config/stage_a/pmt_vit_stage_a_pmt_recipe_288x144.yaml",
+      "physical_gpu": "1",
+      "launcher_pid": 3517153,
+      "python_pid": 3517169,
+      "launcher_log": "train_outputs/stage_a_pmt_recipe_size_compare/a1r_288x144_run2_launcher.log",
+      "output_path": "logs/stage_a_pmt_vit_recipe_288x144_run2/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe",
+      "max_steps": 24,
+      "completed_steps": 24,
+      "best_metric": {
+        "epoch": 23,
+        "rank1": 0.6471207,
+        "mAP": 0.6241672673336647,
+        "mINP": 0.489805989023656
+      },
+      "best_checkpoint": "logs/stage_a_pmt_vit_recipe_288x144_run2/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe/models/model_IR_23.pth",
+      "stop_reason": "completed"
+    }
+  ],
+  "artifacts": {
+    "result_analysis": "train_outputs/stage_a_pmt_recipe_size_compare/RESULT_ANALYSIS.md",
+    "train_metrics_csv": "train_outputs/stage_a_pmt_recipe_size_compare/stage_a_size_train_metrics.csv",
+    "eval_metrics_csv": "train_outputs/stage_a_pmt_recipe_size_compare/stage_a_size_eval_metrics.csv",
+    "summary_json": "train_outputs/stage_a_pmt_recipe_size_compare/stage_a_size_result_summary.json",
+    "plots": [
+      "train_outputs/stage_a_pmt_recipe_size_compare/plots/training_dashboard.png",
+      "train_outputs/stage_a_pmt_recipe_size_compare/plots/eval_dashboard.png",
+      "train_outputs/stage_a_pmt_recipe_size_compare/plots/eval_rank1.png",
+      "train_outputs/stage_a_pmt_recipe_size_compare/plots/eval_map.png",
+      "train_outputs/stage_a_pmt_recipe_size_compare/plots/eval_minp.png"
+    ]
+  }
+}

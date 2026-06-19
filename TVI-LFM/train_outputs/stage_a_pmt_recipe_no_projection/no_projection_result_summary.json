@@ -1,0 +1,84 @@
+{
+  "status": "complete",
+  "current_run": {
+    "run_id": "pmt_recipe_288_768_no_projection",
+    "label": "288x144, 768 no-proj",
+    "log_path": "/home/cgv841/ybj/TVI-LFM/logs/stage_a_pmt_vit_recipe_288x144_768_run1/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe/logs/log.log",
+    "train_epochs": 24,
+    "eval_points": 12,
+    "final_train_epoch": 23,
+    "final_eval_epoch": 23,
+    "final_rank1": 0.6543782,
+    "final_mAP": 0.6411114503056519,
+    "final_mINP": 0.515839151410548,
+    "best_rank1_epoch": 21,
+    "best_rank1": 0.6552722,
+    "best_rank1_mAP": 0.6410838803869323,
+    "best_rank1_mINP": 0.5164715971259015,
+    "best_mAP_epoch": 23,
+    "best_mAP": 0.6411114503056519,
+    "best_mAP_rank1": 0.6543782,
+    "best_mAP_mINP": 0.515839151410548,
+    "checkpoints": [
+      "/home/cgv841/ybj/TVI-LFM/logs/stage_a_pmt_vit_recipe_288x144_768_run1/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe/models/model_IR_21.pth"
+    ]
+  },
+  "references": [
+    {
+      "run_id": "pmt_recipe_288_2048_projection",
+      "label": "288x144, 2048 proj",
+      "log_path": "/home/cgv841/ybj/TVI-LFM/logs/stage_a_pmt_vit_recipe_288x144_run2/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe/logs/log.log",
+      "train_epochs": 24,
+      "eval_points": 12,
+      "final_train_epoch": 23,
+      "final_eval_epoch": 23,
+      "final_rank1": 0.6471207,
+      "final_mAP": 0.6241672673336647,
+      "final_mINP": 0.489805989023656,
+      "best_rank1_epoch": 23,
+      "best_rank1": 0.6471207,
+      "best_rank1_mAP": 0.6241672673336647,
+      "best_rank1_mINP": 0.489805989023656,
+      "best_mAP_epoch": 23,
+      "best_mAP": 0.6241672673336647,
+      "best_mAP_rank1": 0.6471207,
+      "best_mAP_mINP": 0.489805989023656,
+      "checkpoints": [
+        "/home/cgv841/ybj/TVI-LFM/logs/stage_a_pmt_vit_recipe_288x144_run2/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe/models/model_IR_23.pth"
+      ]
+    },
+    {
+      "run_id": "pmt_recipe_256_2048_projection",
+      "label": "256x128, 2048 proj",
+      "log_path": "/home/cgv841/ybj/TVI-LFM/logs/stage_a_pmt_vit_recipe_256x128_run2/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe/logs/log.log",
+      "train_epochs": 24,
+      "eval_points": 12,
+      "final_train_epoch": 23,
+      "final_eval_epoch": 23,
+      "final_rank1": 0.63681304,
+      "final_mAP": 0.6188834971059285,
+      "final_mINP": 0.48570241512104195,
+      "best_rank1_epoch": 23,
+      "best_rank1": 0.63681304,
+      "best_rank1_mAP": 0.6188834971059285,
+      "best_rank1_mINP": 0.48570241512104195,
+      "best_mAP_epoch": 23,
+      "best_mAP": 0.6188834971059285,
+      "best_mAP_rank1": 0.63681304,
+      "best_mAP_mINP": 0.48570241512104195,
+      "checkpoints": [
+        "/home/cgv841/ybj/TVI-LFM/logs/stage_a_pmt_vit_recipe_256x128_run2/sysu/Base/Baseline_train[RGB_IR]_pmt_recipe/models/model_IR_23.pth"
+      ]
+    }
+  ],
+  "delta_768_vs_2048_288_best_rank1_points": {
+    "rank1": 0.8151499999999978,
+    "mAP_at_best_rank1": 1.6916613053267637,
+    "mINP_at_best_rank1": 2.6665608102245497
+  },
+  "delta_768_vs_2048_288_final_points": {
+    "rank1": 0.7257500000000028,
+    "mAP": 1.6944182971987187,
+    "mINP": 2.6033162386892017
+  }
+}

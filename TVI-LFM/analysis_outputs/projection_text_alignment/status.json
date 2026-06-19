@@ -1,0 +1,6 @@
+{
+  "status": "complete",
+  "mode": "read_only",
+  "summary": "Removing the PMT 768-to-2048 projection should not inherently make TVI text alignment harder if Stage B is also configured with prj_output_dim=768; the main risks are checkpoint/script incompatibility and changed comparability against 2048 RN50 TVI-LFM.",
+  "recommended_ablation": "Train A1-PMT-faithful-768, then run a Stage B 768-dim text smoke test and compare against a 2048 PMT branch under the same text recipe."
+}
