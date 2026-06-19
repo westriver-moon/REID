@@ -58,6 +58,8 @@ def get_args():
     parser.add_argument('--test_model_path', type=str, default=None)
     parser.add_argument('--output_path', type=str, default='/data0/hzy_log/WORK_2024_LOG/logs/',
                         help='path to save related informations')
+    parser.add_argument('--clip_download_root', type=str, default='~/.cache/clip',
+                        help='path to cache OpenAI CLIP model weights')
     parser.add_argument('--max_save_model_num', type=int, default=1, help='0 for max num is infinit')
     parser.add_argument('--resume_train_epoch', type=int, default=-1, help='-1 for no resuming')
     parser.add_argument('--auto_resume_training_from_lastest_step', action="store_true", default=False)
@@ -101,6 +103,7 @@ def get_args():
     parser.add_argument("--pmt_dropout", type=float, default=0.03)
     parser.add_argument("--pmt_attention_dropout", type=float, default=0.0)
     parser.add_argument("--pmt_drop_path_rate", type=float, default=0.1)
+    parser.add_argument("--pmt_patch_embed", type=ast.literal_eval, default=None)
 
     ######################## text transformer settings ########################
     parser.add_argument("--text_length", type=int, default=77)

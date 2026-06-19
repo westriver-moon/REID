@@ -46,6 +46,7 @@ class PMTViTVisual(nn.Module):
         drop_path_rate=0.1,
         output_dim=2048,
         pretrained_path=None,
+        patch_embed_config=None,
     ):
         super().__init__()
         self.input_resolution = to_2tuple(input_resolution)
@@ -61,6 +62,7 @@ class PMTViTVisual(nn.Module):
             drop_rate=drop_rate,
             attn_drop_rate=attn_drop_rate,
             drop_path_rate=drop_path_rate,
+            patch_embed_config=patch_embed_config,
         )
         if embed_dim == output_dim:
             self.projection = nn.Identity()
@@ -73,7 +75,10 @@ class PMTViTVisual(nn.Module):
 
     @property
     def input_dtype(self):
-        return self.vit.patch_embed.proj.weight.dtype
+        proj = self.vit.patch_embed.proj
+        if isinstance(proj, nn.ModuleList):
+            return proj[0].weight.dtype
+        return proj.weight.dtype
 
     def forward(self, x, mode=None):
         del mode
@@ -94,6 +99,13 @@ class PMTViTVisual(nn.Module):
         checkpoint = _unwrap_checkpoint(checkpoint)
         if not isinstance(checkpoint, dict):
             raise TypeError(f"PMT checkpoint must resolve to a state dict, got {type(checkpoint)!r}")
+
+        if hasattr(self.vit.patch_embed, "load_from_state_dict_fragment"):
+            checkpoint = {
+                _normalize_checkpoint_key(key): value
+                for key, value in checkpoint.items()
+            }
+            self.vit.patch_embed.load_from_state_dict_fragment(checkpoint)
 
         state = {}
         skipped = []
@@ -117,12 +129,29 @@ class PMTViTVisual(nn.Module):
             state[key] = value
 
         result = self.vit.load_state_dict(state, strict=False)
-        missing_core = [key for key in result.missing_keys if _is_core_backbone_key(key)]
+        patch_embed_loaded_separately = hasattr(self.vit.patch_embed, "load_from_state_dict_fragment")
+        missing_core = [
+            key
+            for key in result.missing_keys
+            if _is_core_backbone_key(key)
+            and not (patch_embed_loaded_separately and key.startswith("patch_embed."))
+        ]
+        allowed_missing_patch_embed = [
+            key
+            for key in result.missing_keys
+            if patch_embed_loaded_separately and key.startswith("patch_embed.")
+        ]
         unexpected_core = [key for key in result.unexpected_keys if _is_core_backbone_key(key)]
 
         logger(f"Loaded PMT ImageNet ViT weights from {model_path}")
         logger(f"Loaded keys: {len(state)}")
         logger(f"Missing keys: {len(result.missing_keys)}; Unexpected keys: {len(result.unexpected_keys)}")
+        if allowed_missing_patch_embed:
+            logger(
+                "Allowed missing multi-branch patch keys: "
+                f"{len(allowed_missing_patch_embed)}; initialized from single-branch patch_embed"
+            )
+        logger(f"Required missing core keys: {len(missing_core)}")
         logger(f"Skipped classifier/distillation keys: {len(skipped)}")
         if skipped:
             logger(f"Skipped keys: {skipped}")

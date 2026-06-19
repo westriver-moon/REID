@@ -3,7 +3,7 @@ from tools import MultiItemAverageMeter
 from torch.cuda import amp
 
 
-def train(base, loaders, scaler, config, optimizer):
+def train(base, loaders, scaler, config, optimizer, current_epoch=None):
     base.set_train()
     meter = MultiItemAverageMeter()
     loader = loaders.get_train_loader()
@@ -35,7 +35,7 @@ def train(base, loaders, scaler, config, optimizer):
         with amp.autocast(enabled=True):
 
             # get loss
-            ret = base(batch_dict, mode)
+            ret = base(batch_dict, mode, current_epoch=current_epoch)
             losses = [value for key, value in ret.items() if 'loss' in key]
             total_loss = sum(losses)
         

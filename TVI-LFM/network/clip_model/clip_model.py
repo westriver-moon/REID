@@ -421,6 +421,7 @@ class CLIP(nn.Module):
                  pmt_dropout: float = 0.03,
                  pmt_attention_dropout: float = 0.0,
                  pmt_drop_path_rate: float = 0.1,
+                 pmt_patch_embed_config=None,
                  ):
         super().__init__()
 
@@ -441,6 +442,7 @@ class CLIP(nn.Module):
                 drop_path_rate=pmt_drop_path_rate,
                 output_dim=embed_dim,
                 pretrained_path=pmt_pretrained,
+                patch_embed_config=pmt_patch_embed_config,
             )
         elif visual_name == "RN50_ORI":
             vision_heads = vision_width * 32 // 64
@@ -713,6 +715,9 @@ def build_CLIP_from_openai_pretrained(name: str, image_size: Union[int, Tuple[in
     model : torch.nn.Module
         The CLIP model
     """
+    if download_root:
+        download_root = os.path.expanduser(download_root)
+
     if name == "PMT_VIT":
         weight_name = "RN50"
     elif "RN50" in name:
@@ -787,6 +792,7 @@ def build_CLIP_from_openai_pretrained(name: str, image_size: Union[int, Tuple[in
         'pmt_dropout': config_dict.get("pmt_dropout", 0.03),
         'pmt_attention_dropout': config_dict.get("pmt_attention_dropout", 0.0),
         'pmt_drop_path_rate': config_dict.get("pmt_drop_path_rate", 0.1),
+        'pmt_patch_embed_config': config_dict.get("pmt_patch_embed"),
     }
 
 

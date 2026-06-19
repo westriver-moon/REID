@@ -11,7 +11,7 @@ def pdist_torch(emb1, emb2):
     emb1_pow = torch.pow(emb1, 2).sum(dim=1, keepdim=True).expand(m, n)
     emb2_pow = torch.pow(emb2, 2).sum(dim=1, keepdim=True).expand(n, m).t()
     dist_mtx = emb1_pow + emb2_pow
-    dist_mtx = dist_mtx.addmm_(1, -2, emb1, emb2.t())
+    dist_mtx = dist_mtx.addmm_(emb1, emb2.t(), beta=1, alpha=-2)
     dist_mtx = dist_mtx.clamp(min=1e-12).sqrt()
     return dist_mtx
 
@@ -82,6 +82,123 @@ class TripletLoss_WRT_local(nn.Module):
         loss = self.ranking_loss(closest_negative - furthest_positive, y)
 
         return loss
+
+
+def hard_example_mining(dist_mat, target):
+    assert len(dist_mat.size()) == 2
+    assert dist_mat.size(0) == dist_mat.size(1)
+    num = dist_mat.size(0)
+    is_pos = target.expand(num, num).eq(target.expand(num, num).t())
+    is_neg = target.expand(num, num).ne(target.expand(num, num).t())
+    dist_ap, _ = torch.max(dist_mat[is_pos].contiguous().view(num, -1), 1, keepdim=True)
+    dist_an, _ = torch.min(dist_mat[is_neg].contiguous().view(num, -1), 1, keepdim=True)
+    return dist_ap.squeeze(1), dist_an.squeeze(1)
+
+
+class PMTTripletLoss(nn.Module):
+    def __init__(self, margin=0.1, feat_norm="no"):
+        super(PMTTripletLoss, self).__init__()
+        self.margin = margin
+        self.feat_norm = feat_norm
+        if margin >= 0:
+            self.ranking_loss = nn.MarginRankingLoss(margin=margin)
+        else:
+            self.ranking_loss = nn.SoftMarginLoss()
+
+    def forward(self, global_feat1, global_feat2, target):
+        if self.feat_norm == "yes":
+            global_feat1 = F.normalize(global_feat1, p=2, dim=-1)
+            global_feat2 = F.normalize(global_feat2, p=2, dim=-1)
+        dist_mat = pdist_torch(global_feat1, global_feat2)
+        dist_ap, dist_an = hard_example_mining(dist_mat, target)
+        y = dist_an.new_ones(dist_an.size())
+        if self.margin >= 0:
+            return self.ranking_loss(dist_an, dist_ap, y)
+        return self.ranking_loss(dist_an - dist_ap, y)
+
+
+class PMTMSEL(nn.Module):
+    def __init__(self, num_pos, feat_norm="no"):
+        super(PMTMSEL, self).__init__()
+        self.num_pos = int(num_pos)
+        self.feat_norm = feat_norm
+
+    def forward(self, inputs, targets):
+        if self.feat_norm == "yes":
+            inputs = F.normalize(inputs, p=2, dim=-1)
+
+        assert inputs.size(0) % 2 == 0, "MSEL expects [visible, ir] concatenation"
+        target, target_ir = targets.chunk(2, 0)
+        assert torch.equal(target, target_ir), "MSEL requires aligned visible and IR labels"
+        num = target.size(0)
+        dist_mat = pdist_torch(inputs, inputs)
+
+        dist_intra_rgb = dist_mat[0:num, 0:num]
+        dist_cross_rgb = dist_mat[0:num, num : 2 * num]
+        dist_intra_ir = dist_mat[num : 2 * num, num : 2 * num]
+        dist_cross_ir = dist_mat[num : 2 * num, 0:num]
+
+        is_pos = target.expand(num, num).eq(target.expand(num, num).t())
+
+        intra_rgb, _ = (is_pos * dist_intra_rgb).topk(self.num_pos - 1, dim=1, largest=True, sorted=False)
+        intra_mean_rgb = torch.mean(intra_rgb, dim=1)
+
+        intra_ir, _ = (is_pos * dist_intra_ir).topk(self.num_pos - 1, dim=1, largest=True, sorted=False)
+        intra_mean_ir = torch.mean(intra_ir, dim=1)
+
+        dist_cross_rgb = dist_cross_rgb[is_pos].contiguous().view(num, -1)
+        cross_mean_rgb = torch.mean(dist_cross_rgb, dim=1)
+
+        dist_cross_ir = dist_cross_ir[is_pos].contiguous().view(num, -1)
+        cross_mean_ir = torch.mean(dist_cross_ir, dim=1)
+
+        loss = (
+            torch.mean(torch.pow(cross_mean_rgb - intra_mean_rgb, 2))
+            + torch.mean(torch.pow(cross_mean_ir - intra_mean_ir, 2))
+        ) / 2
+        return loss
+
+
+class PMTDCL(nn.Module):
+    def __init__(self, num_pos=4, feat_norm="no"):
+        super(PMTDCL, self).__init__()
+        self.num_pos = int(num_pos)
+        self.feat_norm = feat_norm
+
+    def forward(self, inputs, targets):
+        if self.feat_norm == "yes":
+            inputs = F.normalize(inputs, p=2, dim=-1)
+
+        total = inputs.size(0)
+        assert total % (2 * self.num_pos) == 0, "DCL expects [visible, ir] with fixed num_pos chunks"
+        left, right = targets.chunk(2, 0)
+        assert torch.equal(left, right), "DCL requires aligned visible and IR labels"
+        id_num = total // 2 // self.num_pos
+
+        is_neg = targets.expand(total, total).ne(targets.expand(total, total).t())
+        is_neg_c2i = is_neg[:: self.num_pos, :].chunk(2, 0)[0]
+
+        centers = []
+        for i in range(id_num):
+            centers.append(inputs[targets == targets[i * self.num_pos]].mean(0))
+        centers = torch.stack(centers)
+
+        dist_mat = pdist_torch(centers, inputs)
+        an = dist_mat * is_neg_c2i
+        an = an[an > 1e-6].view(id_num, -1)
+        d_neg = torch.mean(an, dim=1, keepdim=True)
+        mask_an = (an - d_neg).expand(id_num, total - 2 * self.num_pos).lt(0)
+        an = an * mask_an
+
+        list_an = []
+        for i in range(id_num):
+            values = an[i][an[i] > 1e-6]
+            list_an.append(torch.mean(values) if values.numel() else d_neg[i, 0])
+        an_mean = sum(list_an) / len(list_an)
+
+        ap = dist_mat * ~is_neg_c2i
+        ap_mean = torch.mean(ap[ap > 1e-6])
+        return ap_mean / (an_mean + 1e-12)
 
 
 # compute the cosine distance between each pair of features

@@ -1,5 +1,5 @@
-output_path: logs/stage_a_pmt_vit/
-CUDA_VISIBLE_DEVICES: "0"
+output_path: logs/stage_a_pmt_vit_recipe_288x144_run2/
+CUDA_VISIBLE_DEVICES: "1"
 gpu_id: "0"
 pretrain_choice: PMT_VIT
 pmt_pretrained: PMT-SYSU/pretrained/jx_vit_base_p16_224-80ecf9dd.pth
@@ -19,12 +19,21 @@ pmt_drop_path_rate: 0.1
 
 training_mode: RGB_IR
 joint_mode: image_only
-loss_names: wrt,id
+loss_names: pmt_recipe
 llm_aug: false
 Feat_Filter: false
 Fix_Visual: false
 Return_B4_BN: false
 freeze_text_in_image_only: true
+
+pmt_recipe: true
+pmt_recipe_transforms: true
+pmt_progressive_epoch: 6
+pmt_triplet_margin: 0.1
+pmt_msel_weight: 0.5
+pmt_dcl_weight: 0.5
+pmt_backbone_lr_factor: 0.5
+pmt_assert_batch_layout: true
 
 test_model_type: IR
 test_modality: IR
@@ -41,7 +50,20 @@ img_size:
 - 144
 batch_size: 32
 num_pos: 4
-seed: 1
-total_train_epoch: 40
-eval_start_epoch: 20
+seed: 0
+
+optimizer: AdamW
+lr_visual: 0.0003
+classifier_lr_factor: 1.0
+visual_bias_lr_factor: 1.0
+visual_weight_decay: 0.0001
+visual_weight_decay_bias: 0.0001
+alpha: 0.9
+beta: 0.999
+lrscheduler: cosine
+warmup_epochs: 3
+warmup_factor: 0.01
+target_lr_factor: 0.01
+total_train_epoch: 24
+eval_start_epoch: 2
 eval_epoch: 2

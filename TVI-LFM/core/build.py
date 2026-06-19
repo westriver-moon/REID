@@ -6,7 +6,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from tools import TripletLoss_WRT,kl_align_loss,TripletLoss_WRT_local,L_i2t,L_t2i
+from tools import (
+    TripletLoss_WRT,
+    kl_align_loss,
+    TripletLoss_WRT_local,
+    L_i2t,
+    L_t2i,
+    PMTTripletLoss,
+    PMTMSEL,
+    PMTDCL,
+)
 
     
 class Normalize(nn.Module):
@@ -157,7 +166,7 @@ class CLIP2ReID(nn.Module):
             args.pretrain_choice,
             args.img_size,
             args.stride_size,
-            download_root="/data0/hzy_log/pretrain_cache/clip",
+            download_root=getattr(self.args, "clip_download_root", "~/.cache/clip"),
             prj_output_dim=self.args.prj_output_dim,
             pooling=self.args.pooling,
             pmt_pretrained=getattr(self.args, "pmt_pretrained", None),
@@ -170,6 +179,7 @@ class CLIP2ReID(nn.Module):
             pmt_dropout=getattr(self.args, "pmt_dropout", 0.03),
             pmt_attention_dropout=getattr(self.args, "pmt_attention_dropout", 0.0),
             pmt_drop_path_rate=getattr(self.args, "pmt_drop_path_rate", 0.1),
+            pmt_patch_embed=getattr(self.args, "pmt_patch_embed", None),
         )
         self.embed_dim = base_cfg['embed_dim']
         if args.pretrain_choice == 'RN50':
@@ -252,6 +262,12 @@ class CLIP2ReID(nn.Module):
         self.pid_criterion = nn.CrossEntropyLoss()
         self.tri_criterion = TripletLoss_WRT()
         self.wrt_local = TripletLoss_WRT_local()
+        self.pmt_tri_criterion = PMTTripletLoss(
+            margin=getattr(args, "pmt_triplet_margin", 0.1),
+            feat_norm="no",
+        )
+        self.pmt_msel_criterion = PMTMSEL(getattr(args, "num_pos", 4), feat_norm="no")
+        self.pmt_dcl_criterion = PMTDCL(getattr(args, "num_pos", 4), feat_norm="no")
 
     def _init_device(self):
         self.device = torch.device(
@@ -287,6 +303,28 @@ class CLIP2ReID(nn.Module):
     def _uses_spatial_map_visual(self):
         return "RN" in self.args.pretrain_choice
 
+    def _pmt_recipe_enabled(self):
+        return bool(getattr(self.args, "pmt_recipe", False))
+
+    def _assert_pmt_batch_layout(self, label_visible, label_ir):
+        if not bool(getattr(self.args, "pmt_assert_batch_layout", True)):
+            return
+        if label_visible.shape != label_ir.shape:
+            raise ValueError(
+                f"PMT recipe expects aligned visible/IR label shapes, got "
+                f"{tuple(label_visible.shape)} and {tuple(label_ir.shape)}"
+            )
+        if not torch.equal(label_visible, label_ir):
+            raise ValueError("PMT recipe requires aligned visible and IR labels in each batch")
+        num_pos = int(getattr(self.args, "num_pos", 4))
+        if label_visible.numel() % num_pos != 0:
+            raise ValueError(
+                f"PMT recipe batch size {label_visible.numel()} must be divisible by num_pos={num_pos}"
+            )
+        chunks = label_visible.view(-1, num_pos)
+        if not torch.all(chunks.eq(chunks[:, :1])):
+            raise ValueError("PMT recipe requires each num_pos chunk to contain one identity")
+
     def _slice_visual_output(self, visual_output, start, end):
         if isinstance(visual_output, dict):
             return {
@@ -314,6 +352,73 @@ class CLIP2ReID(nn.Module):
         if self._uses_spatial_map_visual():
             return self.base_model.visual.__getattr__(self.args.pooling)(visual_output).float().flatten(1)
         raise TypeError(f"Unsupported visual output for {self.args.pretrain_choice}: {type(visual_output)!r}")
+
+    def _forward_pmt_recipe(self, batch_dict, mode=None, current_epoch=None):
+        if self.args.pretrain_choice != "PMT_VIT":
+            raise ValueError("PMT recipe is only valid with pretrain_choice='PMT_VIT'")
+        if self.args.training_mode != "RGB_IR":
+            raise ValueError("PMT recipe is image-only and requires training_mode='RGB_IR'")
+
+        rgb_imgs = batch_dict['img_rgb_ori']
+        gray_imgs = batch_dict['img_rgb_aug']
+        ir_imgs = batch_dict['img_ir']
+        label_rgb = batch_dict['target_rgb'].long()
+        label_ir = batch_dict['target_ir'].long()
+        self._assert_pmt_batch_layout(label_rgb, label_ir)
+
+        epoch = 0 if current_epoch is None else int(current_epoch)
+        is_gray_stage = epoch < int(getattr(self.args, "pmt_progressive_epoch", 6))
+        visible_imgs = gray_imgs if is_gray_stage else rgb_imgs
+        stage = "gray_ir" if is_gray_stage else "rgb_ir"
+
+        if self.args.Fix_Visual:
+            with torch.no_grad():
+                visual_output = self.base_model.encode_image(torch.cat((visible_imgs, ir_imgs), dim=0), mode)
+        else:
+            visual_output = self.base_model.encode_image(torch.cat((visible_imgs, ir_imgs), dim=0), mode)
+
+        b = ir_imgs.size(0)
+        visible_visual = self._slice_visual_output(visual_output, 0, b)
+        ir_visual = self._slice_visual_output(visual_output, b, None)
+        visible_feats = self._get_visual_embedding(visible_visual)
+        ir_feats = self._get_visual_embedding(ir_visual)
+        features = torch.cat((visible_feats, ir_feats), dim=0)
+        labels = torch.cat((label_rgb, label_ir), dim=0)
+
+        _, scores = self.classifier(features)
+        score_visible, score_ir = scores.chunk(2, dim=0)
+
+        ret = dict()
+        ret.update({"temperature": 1 / self.logit_scale.exp()})
+        ret.update({
+            "id_loss": (
+                self.pid_criterion(score_visible, label_rgb)
+                + self.pid_criterion(score_ir, label_ir)
+            ) * self.args.id_loss_weight
+        })
+
+        if is_gray_stage:
+            tri_loss = (
+                self.pmt_tri_criterion(visible_feats, visible_feats, label_rgb)
+                + self.pmt_tri_criterion(ir_feats, ir_feats, label_ir)
+            )
+            zero = features.new_zeros(())
+            ret.update({"tri_loss": tri_loss})
+            ret.update({"msel_loss": zero})
+            ret.update({"dcl_loss": zero})
+        else:
+            tri_loss = self.pmt_tri_criterion(features, features, labels)
+            msel_loss = self.pmt_msel_criterion(features, labels) * getattr(self.args, "pmt_msel_weight", 0.5)
+            dcl_loss = self.pmt_dcl_criterion(features, labels) * getattr(self.args, "pmt_dcl_weight", 0.5)
+            ret.update({"tri_loss": tri_loss})
+            ret.update({"msel_loss": msel_loss})
+            ret.update({"dcl_loss": dcl_loss})
+
+        acc_visible = (score_visible.max(1)[1] == label_rgb).float().mean()
+        acc_ir = (score_ir.max(1)[1] == label_ir).float().mean()
+        ret.update({"acc": (acc_visible + acc_ir) / 2})
+        ret.update({"pmt_stage": stage})
+        return ret
     
     def save_model(self, save_epoch, is_best, mode='Fusion'): # mode = ['IR', 'Fusion', 'Text'] or their composition
         if is_best:
@@ -537,13 +642,16 @@ class CLIP2ReID(nn.Module):
             
         return f_feats.float()
 
-    def forward(self, batch_dict, mode=None):
+    def forward(self, batch_dict, mode=None, current_epoch=None):
         # get data
         rgb_imgs0 = batch_dict['img_rgb_ori']
         rgb_imgs1 = batch_dict['img_rgb_aug']
         ir_imgs = batch_dict['img_ir']
         label_rgb = batch_dict['target_rgb']
         label_ir = batch_dict['target_ir']
+
+        if self._pmt_recipe_enabled():
+            return self._forward_pmt_recipe(batch_dict, mode=mode, current_epoch=current_epoch)
 
         # init return dict
         ret = dict()

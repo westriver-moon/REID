@@ -44,6 +44,7 @@ def main():
         drop_path_rate=config.pmt_drop_path_rate,
         output_dim=config.prj_output_dim,
         pretrained_path=pretrained_path,
+        patch_embed_config=getattr(config, "pmt_patch_embed", None),
     )
     model.eval()
 
@@ -52,6 +53,8 @@ def main():
     print(f"load_checkpoint={args.load_checkpoint}")
     print(f"depth={depth}")
     print(f"num_patches={model.vit.patch_embed.num_patches}")
+    if hasattr(model.vit.patch_embed, "branch_configs"):
+        print(f"patch_branches={model.vit.patch_embed.branch_configs}")
     print(f"output_dim={model.output_dim}")
 
     if args.skip_forward:

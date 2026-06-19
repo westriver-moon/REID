@@ -15,6 +15,7 @@ beta: 0.999
 captioner_name: Blip
 checkpoint_epoch: 10
 classifier_lr_factor: 2.0
+clip_download_root: ~/.cache/clip
 cmm_loss_weight: 1.0
 cmt_depth: 1
 config_select: default
@@ -97,8 +98,18 @@ pmt_mlp_ratio: 4.0
 pmt_dropout: 0.03
 pmt_attention_dropout: 0.0
 pmt_drop_path_rate: 0.1
+pmt_patch_embed: null
+pmt_recipe: false
+pmt_recipe_transforms: false
+pmt_progressive_epoch: 6
+pmt_triplet_margin: 0.1
+pmt_msel_weight: 0.5
+pmt_dcl_weight: 0.5
+pmt_backbone_lr_factor: 0.5
+pmt_assert_batch_layout: true
 sysu_data_path: datasets/sysu
 target_lr: 0.0
+target_lr_factor: null
 temperature: 0.07
 test_modality: Fusion
 test_mode: all

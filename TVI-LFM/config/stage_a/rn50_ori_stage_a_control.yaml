@@ -1,7 +1,10 @@
-output_path: logs/stage_a_rn50_ori_control
+output_path: logs/stage_a_rn50_ori_control/
+CUDA_VISIBLE_DEVICES: "0"
+gpu_id: "0"
 pretrain_choice: RN50_ORI
 
 training_mode: RGB_IR
+joint_mode: image_only
 loss_names: wrt,id
 llm_aug: false
 Feat_Filter: false
@@ -16,7 +19,7 @@ pooling: GEM
 prj_output_dim: 2048
 
 dataset: sysu
-sysu_data_path: /home/cgv841/datasets/SYSU-MM01
+sysu_data_path: /home/cgv841/datasets/SYSU-MM01/
 img_h: 288
 img_w: 144
 img_size:

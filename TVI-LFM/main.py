@@ -175,7 +175,7 @@ def main(config):
             scheduler.step(current_epoch)
 
             if current_epoch < config.total_train_epoch:
-                result_vals, result = train(model, loaders, scaler, config, optimizer)
+                result_vals, result = train(model, loaders, scaler, config, optimizer, current_epoch=current_epoch)
                 # visual log
                 for key, value in zip(*result_vals):
                     loss_writer.add_scalar(key, value, current_epoch)

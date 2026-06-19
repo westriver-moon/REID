@@ -153,6 +153,91 @@ class PatchEmbedOverlap(nn.Module):
         return x.flatten(2).transpose(1, 2)
 
 
+def _resize_patch_kernel(weight, patch_size):
+    if tuple(weight.shape[-2:]) == tuple(patch_size):
+        return weight
+    out_ch, in_ch, _height, _width = weight.shape
+    flat = weight.reshape(out_ch * in_ch, 1, weight.shape[-2], weight.shape[-1])
+    resized = F.interpolate(flat, size=patch_size, mode="bicubic", align_corners=False)
+    return resized.reshape(out_ch, in_ch, patch_size[0], patch_size[1])
+
+
+class MultiBranchPatchEmbedOverlap(nn.Module):
+    """Multi-scale overlapping patch embedding fused on the anchor token grid."""
+
+    def __init__(self, img_size=(288, 144), branches=None, anchor_branch=0, in_chans=3, embed_dim=768):
+        super().__init__()
+        img_size = to_2tuple(img_size)
+        branches = list(branches or [])
+        if not branches:
+            raise ValueError("multi-branch patch embedding requires at least one branch")
+        self.img_size = img_size
+        self.anchor_branch = int(anchor_branch)
+        if self.anchor_branch < 0 or self.anchor_branch >= len(branches):
+            raise ValueError(f"anchor_branch {self.anchor_branch} is out of range for {len(branches)} branches")
+
+        self.branch_configs = []
+        self.proj = nn.ModuleList()
+        for branch in branches:
+            patch_size = to_2tuple(branch.get("patch_size", 16))
+            stride_size = to_2tuple(branch.get("stride_size", branch.get("stride", patch_size)))
+            self.branch_configs.append({"patch_size": patch_size, "stride_size": stride_size})
+            conv = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride_size)
+            nn.init.normal_(conv.weight, 0, math.sqrt(2.0 / (patch_size[0] * patch_size[1] * embed_dim)))
+            if conv.bias is not None:
+                nn.init.zeros_(conv.bias)
+            self.proj.append(conv)
+
+        anchor = self.branch_configs[self.anchor_branch]
+        self.patch_size = anchor["patch_size"]
+        self.stride_size = anchor["stride_size"]
+        self.num_x = (img_size[1] - self.patch_size[1]) // self.stride_size[1] + 1
+        self.num_y = (img_size[0] - self.patch_size[0]) // self.stride_size[0] + 1
+        self.num_patches = self.num_x * self.num_y
+        self.fuse = nn.Conv2d(embed_dim * len(self.proj), embed_dim, kernel_size=1, bias=True)
+        self._init_fuse_as_anchor_identity(embed_dim)
+
+    def _init_fuse_as_anchor_identity(self, embed_dim):
+        with torch.no_grad():
+            self.fuse.weight.zero_()
+            self.fuse.bias.zero_()
+            start = self.anchor_branch * embed_dim
+            for channel in range(embed_dim):
+                self.fuse.weight[channel, start + channel, 0, 0] = 1.0
+
+    def load_from_state_dict_fragment(self, state_dict):
+        weight = state_dict.pop("patch_embed.proj.weight", None)
+        bias = state_dict.pop("patch_embed.proj.bias", None)
+        if weight is None:
+            return
+        if len(weight.shape) < 4:
+            out_ch, in_ch = self.proj[self.anchor_branch].weight.shape[:2]
+            height, width = self.proj[self.anchor_branch].weight.shape[-2:]
+            weight = weight.reshape(out_ch, in_ch, height, width)
+        with torch.no_grad():
+            for conv, branch in zip(self.proj, self.branch_configs):
+                conv.weight.copy_(_resize_patch_kernel(weight, branch["patch_size"]))
+                if bias is not None and conv.bias is not None:
+                    conv.bias.copy_(bias)
+
+    def forward(self, x):
+        batch, channels, height, width = x.shape
+        del batch, channels
+        assert (height, width) == self.img_size, (
+            f"Input image size ({height}*{width}) doesn't match model "
+            f"({self.img_size[0]}*{self.img_size[1]})."
+        )
+        target_size = (self.num_y, self.num_x)
+        feature_maps = []
+        for conv in self.proj:
+            feature_map = conv(x)
+            if feature_map.shape[-2:] != target_size:
+                feature_map = F.interpolate(feature_map, size=target_size, mode="bilinear", align_corners=False)
+            feature_maps.append(feature_map)
+        x = self.fuse(torch.cat(feature_maps, dim=1))
+        return x.flatten(2).transpose(1, 2)
+
+
 class ViT(nn.Module):
     def __init__(
         self,
@@ -168,10 +253,20 @@ class ViT(nn.Module):
         drop_rate=0.0,
         attn_drop_rate=0.0,
         drop_path_rate=0.0,
+        patch_embed_config=None,
         norm_layer=nn.LayerNorm,
     ):
         super().__init__()
-        self.patch_embed = PatchEmbedOverlap(img_size, patch_size, stride_size, in_chans, embed_dim)
+        if patch_embed_config:
+            self.patch_embed = MultiBranchPatchEmbedOverlap(
+                img_size=img_size,
+                branches=patch_embed_config.get("branches", []),
+                anchor_branch=patch_embed_config.get("anchor_branch", 0),
+                in_chans=in_chans,
+                embed_dim=embed_dim,
+            )
+        else:
+            self.patch_embed = PatchEmbedOverlap(img_size, patch_size, stride_size, in_chans, embed_dim)
         num_patches = self.patch_embed.num_patches
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))

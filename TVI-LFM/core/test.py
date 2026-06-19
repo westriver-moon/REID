@@ -14,6 +14,10 @@ def _eval_image_feature(base, visual_output, mode="RGB", use_backup=False):
     feat = base._get_visual_embedding(visual_output)
     return base.classifier(feat, mode)
 
+
+def _needs_text(test_modality):
+    return any(modality in test_modality for modality in ("Fusion", "Text"))
+
 def test(base, loader, config, device):
     embed_dim = base.embed_dim
     base.set_eval()
@@ -53,7 +57,7 @@ def test(base, loader, config, device):
                     batch_num = input.size(0)
                     input = Variable(input.to(device))
                     
-                    if  'Fusion' or 'Text' in config.test_modality:
+                    if _needs_text(config.test_modality):
                         text = batch_dict['text']
                         text = text.to(device).long()
                         
@@ -119,7 +123,7 @@ def test(base, loader, config, device):
                 batch_num = input.size(0)
                 input = Variable(input.to(device))
                 
-                if  'Fusion' or 'Text' in config.test_modality:
+                if _needs_text(config.test_modality):
                     text = batch_dict['text']
                     text = text.to(device).long()
                     
